@@ -7,12 +7,14 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencias"
-    # Majors do NestJS/TypeScript precisam de upgrade coordenado (10→12: common, core,
-    # platform-express, swagger, config... em lockstep) — PR isolado de um pacote falha no
-    # CI e vira ruído. Ignorados aqui até existir o upgrade dedicado (dívida registrada no
-    # CLAUDE.md, gate do npm audit em `critical` até lá); minor/patch seguem normalmente.
+    # Majors do TypeScript e do Prisma exigem migração dedicada (Prisma 5→7 mexe em
+    # schema/client; TS major mexe em @nestjs/swagger e @nestjs/schematics) — PR isolado
+    # falha no CI e vira ruído. Ignorados até existir a migração; minor/patch seguem.
+    # (O NestJS 10→12 já foi feito — o ignore de @nestjs/* saiu.)
     ignore:
-      - dependency-name: "@nestjs/*"
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
@@ -24,7 +24,9 @@ import { UsersModule } from '../users/users.module';
         return {
           secret,
           signOptions: {
-            expiresIn: configService.get<string>('JWT_EXPIRES_IN', '7d'),
+            // @nestjs/jwt 12 tipa expiresIn como number | StringValue (formato do `ms`, ex.: '7d');
+            // o valor vem de env como string livre, validado só em runtime pelo jsonwebtoken.
+            expiresIn: configService.get<string>('JWT_EXPIRES_IN', '7d') as JwtSignOptions['expiresIn'],
           },
         };
       },
