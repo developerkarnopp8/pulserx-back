@@ -1,45 +1,25 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
 
 type AuthUser = { id: string; role: string };
 
 @Injectable()
 export class SessionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private planAccess: PlanAccessService,
+  ) {}
 
   async findById(id: string, user: AuthUser) {
-    // 1ª consulta: só o necessário pra checar posse (coach dono ou o próprio atleta),
-    // sem trazer nenhum dado sensível antes de autorizar (histórico de IDOR no projeto).
-    const context = await this.prisma.session.findUnique({
-      where: { id },
-      select: {
-        day: {
-          select: {
-            week: {
-              select: {
-                plan: {
-                  select: { coachId: true, student: { select: { userId: true } } },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!context) throw new NotFoundException('Sessão não encontrada');
+    // Autoriza ANTES de trazer qualquer dado (histórico de IDOR no projeto): coach dono do plano,
+    // aluno dono do plano individual, ou aluno do coach com a categoria liberada no plano compartilhado.
+    const access = await this.planAccess.resolveBySessionId(id, user);
 
-    const plan = context.day.week.plan;
-    const isOwningCoach = user.role === 'coach' && plan.coachId === user.id;
-    const isSelf = user.role === 'athlete' && plan.student.userId === user.id;
-    if (!isOwningCoach && !isSelf) {
-      throw new ForbiddenException('Você não tem acesso a esta sessão.');
-    }
-
-    // athleteId = dono do plano (não necessariamente quem está pedindo — o coach também
-    // pode ver a sessão). workoutSkips é filtrado por esse athleteId nos dois níveis,
-    // igual ao fullPlanInclude do TrainingPlansService, pra não vazar skip de outro aluno.
-    const athleteId = plan.student.userId;
-
+    // athleteId = de quem é o progresso exibido. Coach num plano individual vê o do aluno; coach num
+    // plano compartilhado não tem progresso próprio (o filtro vira o dele mesmo e volta vazio).
+    // Filtrar sempre evita vazar skip/log de outro aluno num plano compartilhado.
+    const athleteId = access.athleteId ?? user.id;
     const session = await this.prisma.session.findUnique({
       where: { id },
       include: {

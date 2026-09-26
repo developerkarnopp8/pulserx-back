@@ -94,3 +94,53 @@ describe('SubscriptionAccessService — flag enforceSubscriptionAccess', () => {
     await expect(service.assertCanAccessCategory('s1', 'CORE')).resolves.toBeUndefined();
   });
 });
+
+describe('SubscriptionAccessService.getViewableCategories', () => {
+  it('bloqueio desligado → todas as categorias (comportamento pré-v2), sem consultar a assinatura', async () => {
+    const { service, prisma } = makeService({ enforced: false });
+    await expect(service.getViewableCategories('s1')).resolves.toEqual(['CORE', 'LPO', 'PERFORMANCE']);
+    expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('bloqueio ligado → só as categorias da assinatura', async () => {
+    const { service } = makeService({ enforced: true, subscription: sub({}, ['LPO']) });
+    await expect(service.getViewableCategories('s1')).resolves.toEqual(['LPO']);
+  });
+
+  it('bloqueio ligado e sem assinatura → nenhuma', async () => {
+    const { service } = makeService({ enforced: true, subscription: null });
+    await expect(service.getViewableCategories('s1')).resolves.toEqual([]);
+  });
+});
+
+describe('SubscriptionAccessService.filterStudentsWithCategory', () => {
+  const rows = [
+    { studentId: 'a', ...sub({}, ['CORE']) },
+    { studentId: 'b', ...sub({}, ['LPO']) },
+    { studentId: 'c', ...sub({ status: SubscriptionStatus.PAST_DUE }, ['CORE']) },
+    { studentId: 'd', ...sub({ status: SubscriptionStatus.TRIALING, trialEndsAt: new Date(NOW.getTime() - DAY) }, ['CORE']) },
+    { studentId: 'e', ...sub({ status: SubscriptionStatus.TRIALING, trialEndsAt: new Date(NOW.getTime() + DAY) }, ['CORE']) },
+  ];
+
+  it('lista vazia → vazia, sem consultar nada', async () => {
+    const { service, prisma } = makeService({ enforced: true });
+    await expect(service.filterStudentsWithCategory([], 'CORE', NOW)).resolves.toEqual([]);
+    expect(prisma.platformSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('bloqueio desligado → todos passam, sem consultar assinaturas', async () => {
+    const { service, prisma } = makeService({ enforced: false });
+    await expect(service.filterStudentsWithCategory(['a', 'x'], 'CORE', NOW)).resolves.toEqual(['a', 'x']);
+    expect((prisma.subscription as any).findMany).toBeUndefined();
+  });
+
+  it('bloqueio ligado → só quem tem a categoria com status válido (mesma regra do acesso individual), numa consulta só', async () => {
+    const { service, prisma } = makeService({ enforced: true });
+    (prisma.subscription as any).findMany = jest.fn().mockResolvedValue(rows);
+
+    await expect(
+      service.filterStudentsWithCategory(['a', 'b', 'c', 'd', 'e', 'sem-assinatura'], 'CORE', NOW),
+    ).resolves.toEqual(['a', 'e']);
+    expect((prisma.subscription as any).findMany).toHaveBeenCalledTimes(1);
+  });
+});
