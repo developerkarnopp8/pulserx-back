@@ -1,12 +1,12 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: aevonfit-db
+    container_name: pulserx-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: aevonfit
+      POSTGRES_DB: pulserx
     ports:
       - '5434:5432'
     volumes:
@@ -14,7 +14,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: aevonfit-redis
+    container_name: pulserx-redis
     restart: unless-stopped
     ports:
       - '6380:6379'
@@ -23,13 +23,13 @@ services:
 
   api:
     build: .
-    container_name: aevonfit-api
+    container_name: pulserx-api
     restart: unless-stopped
     depends_on:
       - db
       - redis
     environment:
-      DATABASE_URL: postgresql://postgres:password@db:5432/aevonfit
+      DATABASE_URL: postgresql://postgres:password@db:5432/pulserx
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-prod}
       JWT_EXPIRES_IN: 7d
       REDIS_HOST: redis
