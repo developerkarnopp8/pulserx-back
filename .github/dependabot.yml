@@ -21,12 +21,26 @@ updates:
       # Os tipos acompanham o Node do runtime (24) — não pular pra 26.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-    # UM PR só pra todas as atualizações (minor, patch e major) — todos mexem no
-    # package-lock.json, então PRs separados ficam em conflito entre si assim que o
-    # primeiro é mergeado.
+      # @nestjs/schematics 12 exige TypeScript >= 6 (npm ci falha com ERESOLVE) — sobe junto com o TS.
+      - dependency-name: "@nestjs/schematics"
+        update-types: ["version-update:semver-major"]
+      # ESLint 10 / typescript-eslint 8 exigem migrar o .eslintrc.js para flat config — migração dedicada.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@typescript-eslint/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-prettier"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-prettier"
+        update-types: ["version-update:semver-major"]
+    # Um PR só pra todos os minor/patch — todos mexem no package-lock.json, então PRs
+    # separados ficam em conflito entre si assim que o primeiro é mergeado. Majors NÃO
+    # entram no grupo: um major quebrado (peer dependency, config) derrubaria o PR inteiro
+    # (foi o que aconteceu no #68); cada major vem isolado, quando o Dependabot achar.
     groups:
-      dependencias:
+      minor-e-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
