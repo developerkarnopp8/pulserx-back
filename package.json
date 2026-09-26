@@ -1,8 +1,8 @@
 {
-  "name": "aevonfit-backend",
+  "name": "pulserx-backend",
   "version": "1.0.0",
-  "description": "AevonFit Gym Management SaaS — NestJS Backend",
-  "author": "AevonFit",
+  "description": "PulseRx Gym Management SaaS — NestJS Backend",
+  "author": "PulseRx",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
