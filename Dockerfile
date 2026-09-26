@@ -1,4 +1,4 @@
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 RUN apt-get update -y && apt-get install -y openssl
@@ -10,7 +10,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ── Production image ─────────────────────────────────────────────────────────
-FROM node:20-slim AS production
+FROM node:24-slim AS production
 
 WORKDIR /app
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
