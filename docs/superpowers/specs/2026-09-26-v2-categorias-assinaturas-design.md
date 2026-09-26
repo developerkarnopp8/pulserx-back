@@ -13,10 +13,11 @@
 |---|---|---|
 | 1 | Nome do produto: **PulseRx** (não "AevonFit"; `@aevonfit.com` é só o domínio de e-mail interno e **não se renomeia**). | Ver memória do projeto. |
 | 2 | **Coach e admin controlam tudo** — inclusive o que o plano **Free** libera. O admin (dono) administra **mais de um coach** e pode fazer tudo que um coach faz, em qualquer coach. | Planos e regras são **dados configuráveis**, não enum fixo no código. Os 4 SKUs (Combo/Core/LPO/Free) são só o *padrão inicial*. |
-| 3 | **Cobrança de assinatura pelo Mercado Pago.** A **porcentagem da plataforma é definida por contrato, por coach.** | Um contrato por coach (`platformFeePercent`) + conta Mercado Pago do coach. |
-| 4 | **Alunos que já existem entram no Free** quando a v2 subir. | Risco: perdem o plano individual (que vira "Performance", fora do Free). **Mitigação combinada:** o bloqueio por assinatura nasce **desligado** (flag `enforceSubscriptionAccess`); coach/admin atribuem planos (ferramenta de atribuição em massa) e só então o admin liga o bloqueio. |
+| 3 | **Gateway: Mercado Pago preferido, mas Asaas também serve** (dono, 2026-09-26: "podemos optar por MP; se der, cada coach loga a conta Asaas dele e eu recebo na minha, ou crio uma conta Asaas só da PulseRx, tanto faz"). A **porcentagem da plataforma é definida por contrato, por coach.** | Schema **agnóstico de gateway** (`PaymentGateway`). Um contrato por coach (`platformFeePercent`) + credencial do coach no gateway escolhido. **A escolha final sai do spike da Rodada 4** (ver §4.1). |
+| 4 | **Os alunos que já existem em produção são todos TESTE e podem ser removidos** (dono, 2026-09-26; substitui a decisão anterior de "todos entram no Free"). | **Sem backfill/grandfathering.** A remoção dos dados de teste em produção é uma operação destrutiva: fazer **só na hora do deploy**, com **backup do banco antes** e confirmação explícita do dono naquele momento. |
 | 5 | **Manual primeiro, Mercado Pago depois.** O produto funciona com atribuição manual de plano; o teste técnico do Mercado Pago roda em paralelo. | Rodada 3 (manual) antes da 4 (gateway). |
 | 6 | **Escopo = tudo dos prints**, dividido em rodadas. | Ver §5 — várias rodadas, nenhuma é um PR único. |
+| 7 | **Financeiro: só relatório/estimativa** (dono: "pode ser"). Emissão de NFS-e, custódia/escrow e contrato jurídico **não** entram sem decisão jurídica/contábil. | Rodada 7 é relatório (receita, churn, LTV, exportações CSV), não emissão fiscal. |
 
 ## 2. Modelo de dados (aditivo — `prisma db push`/migration sem quebrar produção)
 
@@ -24,6 +25,7 @@
 enum TrainingCategory { CORE  LPO  PERFORMANCE }
 enum PlanScope        { SHARED  INDIVIDUAL }
 enum SubscriptionStatus { TRIALING  ACTIVE  PAST_DUE  CANCELED }
+enum PaymentGateway     { MERCADO_PAGO  ASAAS }
 
 SubscriptionPlan            // por coach; admin edita de qualquer coach
   id, coachId, name, description
@@ -36,12 +38,14 @@ SubscriptionPlan            // por coach; admin edita de qualquer coach
 Subscription                // por aluno
   id, studentId, planId, status SubscriptionStatus
   startedAt, renewsAt, canceledAt
-  mpPreapprovalId String?   // Mercado Pago (Rodada 4)
+  gateway PaymentGateway?   // definido na Rodada 4
+  gatewaySubscriptionId String?   // id da assinatura no gateway (preapproval no MP / subscription no Asaas)
   trialEndsAt DateTime?
 
 CoachContract               // por coach; SÓ o admin edita
   coachId (unique), platformFeePercent Decimal  // definido por contrato
-  mpUserId String?, mpAccessToken (cifrado) ...  // OAuth do coach (Rodada 4)
+  gateway PaymentGateway?, gatewayAccountRef String?   // MP: user id + token OAuth (cifrado); Asaas: walletId do coach
+                                                        // (segredos nunca em claro nem em log — usar `utils/safeLog`)
 
 TrainingPlan  (existente)  → ganha:
   category TrainingCategory   // existentes viram PERFORMANCE
@@ -52,11 +56,11 @@ PerformanceEvaluation       // avaliação do coach sobre o aluno (Rodada 5)
   id, studentId, coachId, score, notes, category?, createdAt
 ```
 
-**Regra de acesso:** o aluno vê (a) os planos `SHARED` das categorias do plano ativo dele + (b) o plano `INDIVIDUAL` PERFORMANCE dele, se PERFORMANCE estiver incluída. Free segue `freeConfig`. Com `enforceSubscriptionAccess = false`, o comportamento atual é preservado.
+**Regra de acesso:** o aluno vê (a) os planos `SHARED` das categorias do plano ativo dele + (b) o plano `INDIVIDUAL` PERFORMANCE dele, se PERFORMANCE estiver incluída. Free segue `freeConfig`. O bloqueio por assinatura fica atrás da flag `enforceSubscriptionAccess`, **desligada até a Rodada 3** — não por causa de dados legados (são teste), mas porque enquanto não existir tela para atribuir plano (R3) ligar o bloqueio trancaria todo mundo. Na R3 o admin liga.
 
 **Plano compartilhado (Core/LPO):** calendário próprio (não depende do `startDate` de cada aluno); progresso continua **por aluno** (`WorkoutLog`/`WorkoutSession`/`WorkoutSkip` já são por atleta e apontam para `Exercise`, que passa a ser compartilhado).
 
-**Migração dos dados existentes:** todos os `TrainingPlan` atuais → `category=PERFORMANCE`, `scope=INDIVIDUAL`; todos os `Student` atuais → `Subscription` no plano Free do coach (decisão #4), com o bloqueio desligado.
+**Migração de schema:** `TrainingPlan.category` com default `PERFORMANCE` e `scope` com default `INDIVIDUAL` (campos novos com default — nenhuma linha existente quebra). Sem backfill de `Subscription`: os alunos atuais são teste e serão removidos (decisão #4).
 
 ## 3. Permissões
 
@@ -67,8 +71,11 @@ PerformanceEvaluation       // avaliação do coach sobre o aluno (Rodada 5)
 
 ## 4. Riscos e pendências técnicas (não decididos)
 
-1. **Mercado Pago: recorrência + repasse por coach.** No AmoraRunning usamos Checkout Pro com `marketplace_fee` + OAuth do vendedor. **Não está confirmado** que a API de assinaturas (`preapproval`) aceita repasse/`marketplace_fee` da mesma forma. **Fazer um spike antes de prometer** (Rodada 4). Alternativas se não for viável: cobrança mensal por Checkout Pro gerada por job (link/Pix mensal), ou split manual/contábil.
-2. **Prints citam Asaas/Stripe** (ex.: "Custodiante Asaas / SmartSplit API", "Gateway Stripe + Pix"); o dono decidiu **Mercado Pago**. Tratar os prints como layout, não como decisão de gateway.
+1. **Gateway de assinatura recorrente com repasse por coach — decidir por spike (Rodada 4).** Duas rotas viáveis, a definir:
+   - **Asaas (provável melhor encaixe técnico):** a **plataforma** cria a assinatura recorrente na conta Asaas dela e usa o **split** (`walletId` do coach + percentual) para repassar a parte do coach; o coach só precisa ter conta Asaas e informar o `walletId` — **não exige criar subconta por API** (importante: no AmoraRunning a criação de subconta Asaas esteve quebrada do lado deles em ago/2026). A plataforma seria a "vendedora" (responde por estorno/chargeback e emite a cobrança) — **implicação contratual a validar**. O dono aceita tanto "cada coach loga a conta Asaas dele e eu recebo na minha" quanto "uma conta Asaas só da PulseRx".
+   - **Mercado Pago:** no AmoraRunning usamos Checkout Pro + `marketplace_fee` + OAuth do vendedor. **Não está confirmado** que a API de assinaturas (`preapproval`) aceita repasse/`marketplace_fee` do mesmo jeito. Alternativa: cobrança mensal por Checkout Pro gerada por job (link/Pix mensal).
+   - O spike deve confirmar, em **sandbox**: recorrência, split com % por coach, webhook idempotente, cancelamento/upgrade/downgrade, inadimplência. O código Asaas do AmoraRunning está dormente e serve de ponto de partida (`api/src/services/asaas.service.ts` naquele repo).
+2. **Prints citam Asaas/Stripe;** o dono aceitou **Asaas ou Mercado Pago** (decisão #3). Stripe está fora.
 3. **Financeiro "joint venture 50/50", DRE, NF-e, escrow/contrato, chave PIX/CNPJ de recebimento:** envolvem contabilidade/jurídico (emissão de NFS-e, custódia, split). O que for **estimativa/relatório** entra; o que for **emissão fiscal ou custódia real** precisa de decisão jurídica/contábil e de um provedor — **não assumir**.
 4. **LGPD (skill `validacao-lgpd-pre-producao` antes de produção):** cobrança, avaliação de desempenho, dados de pessoas físicas; a AEVON é operadora e o coach/plataforma controlador — deixar explícito.
 5. **Carga adaptativa por PR** (kg calculado a partir do PR do atleta): depende de `PersonalRecord` (existe) e de regra de arredondamento definida pelo coach.
@@ -78,10 +85,10 @@ PerformanceEvaluation       // avaliação do coach sobre o aluno (Rodada 5)
 
 | Rodada | Entrega | Depende de | Observação |
 |---|---|---|---|
-| **R1 — Fundação** | Schema aditivo (categoria/escopo/planos/assinaturas/contrato) + backfill + serviço de acesso + flag `enforceSubscriptionAccess` (desligada). Sem UI. | — | Baixo risco, base de tudo. |
+| **R1 — Fundação** | Schema aditivo (categoria/escopo/planos/assinaturas/contrato, gateway-agnóstico) + serviço de acesso + flag `enforceSubscriptionAccess` (desligada). Sem UI, sem backfill (alunos atuais são teste). | — | Baixo risco, base de tudo. |
 | **R2 — Plano compartilhado** | Editor de plano Core/LPO (builder único por categoria) + visão do atleta por assinatura. | R1 | Reusa o Plan Builder atual. |
-| **R3 — Assinaturas (manual)** | Tela de planos (coach/admin), atribuição individual **e em massa**, upgrade/downgrade, configuração do Free, contrato (%) pelo admin, ligar o bloqueio. | R1, R2 | Aqui o dono liga `enforceSubscriptionAccess`. |
-| **R4 — Mercado Pago** | Spike (recorrência + repasse) → OAuth do coach, cobrança recorrente, webhook como fonte de verdade, %, dunning/inadimplência, trial→conversão. | R3 | Bloqueada pelo spike. |
+| **R3 — Assinaturas (manual)** | Tela de planos (coach/admin), atribuição individual, upgrade/downgrade, configuração do Free, contrato (%) pelo admin, ligar o bloqueio. | R1, R2 | Aqui o dono liga `enforceSubscriptionAccess`. |
+| **R4 — Gateway (Asaas ou MP)** | Spike em sandbox (recorrência + split por coach) → decisão → credencial do coach, cobrança recorrente, webhook como fonte de verdade, %, dunning/inadimplência, trial→conversão. | R3 | Bloqueada pelo spike. |
 | **R5 — Avaliação + chat** | Avaliação de desempenho; chat com filtros por plano (o módulo de mensagens já existe). | R1 | Independente de R4. |
 | **R6 — Telas do atleta** | Assinatura/upgrade, Aulas (vídeos por plano com progresso), "Gestão". | R2, R3 | Conteúdo pago com upsell ("requer plano X"). |
 | **R7 — Financeiro do coach/admin** | Painel de receita, churn, LTV, NPS, ledger e exportações (CSV/DRE como **relatório**). | R4 | Emissão de NFS-e/escrow só após decisão jurídica (§4.3). |
