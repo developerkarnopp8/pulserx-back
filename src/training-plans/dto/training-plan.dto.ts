@@ -1,8 +1,7 @@
 import {
   IsString, IsNumber, IsBoolean, IsOptional, IsEnum,
-  IsUrl, IsArray, ValidateNested, Min, Max, IsDateString,
+  IsUrl, Min, Max, IsDateString,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum SessionType {
@@ -94,6 +93,7 @@ export class CreateExerciseDto {
   name: string;
 
   @ApiPropertyOptional({ example: 'https://youtube.com/...' })
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @IsOptional()
   youtubeUrl?: string;
 

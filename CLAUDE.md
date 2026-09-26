@@ -4,6 +4,8 @@
 
 > **Rename (2026-09-26):** o projeto se chamava AEVONFIT/AevonFit; agora é **PulseRx** (repo `pulserx-back`). O rename cobriu código, `package.json`, docker-compose de desenvolvimento, docs. **Domínio, CORS e `docker-compose.prod.yml` (nome dos containers/DB reais em produção) continuam com "aevonfit" até uma migração dedicada da VPS** — mudar isso agora quebraria o CORS/DNS reais sem um plano de janela de manutenção. **`@aevonfit.com` como domínio de e-mail (contas de coach/atleta/admin, prod e local) é mantido de propósito, por decisão do dono** — é só o domínio de e-mail interno, não faz parte da marca do produto; não renomear em nenhum ambiente, incluindo seed local.
 
+> **CI/CD (2026-09-26):** `.github/workflows/ci.yml` criado do zero (lint + testes + build + CodeQL + `npm audit`). Restaurado `.eslintrc.js` (os pacotes ESLint 8/typescript-eslint 6 já estavam instalados, só faltava a config) — achado ao rodar: `training-plans/dto/training-plan.dto.ts` tinha o import de `IsUrl` nunca aplicado, ou seja, `CreateExerciseDto.youtubeUrl` aceitava qualquer valor sem validação de formato (corrigido, com teste cobrindo inclusive esquema `javascript:`). **Dívida técnica pendente, decisão do dono:** `npm audit --omit=dev` tem 4 Altas reais em produção (`multer`/`qs`/`js-yaml`/`lodash`, puxadas por `@nestjs/platform-express`/`@nestjs/swagger`/`@nestjs/config` — DoS e prototype pollution, não RCE) que só fecham com **NestJS 10→12 (major, breaking change)** — fora do escopo do CI. O gate do CI hoje trava em `--audit-level=critical` (não `high`) até essa migração acontecer; reapertar pra `high` quando o upgrade for feito.
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.
@@ -155,4 +157,4 @@ Movement (catálogo global ou customizado por coach — coachId opcional)
 
 ---
 
-_Última atualização: 2026-09-26 — rename AEVONFIT → PulseRx (código, package.json, docker-compose dev, docs; VPS/domínio/DB de produção ficam para depois). Anterior: 2026-08-28 — adicionado o papel admin, módulo /admin, e o campo User.aiImportEnabled._
+_Última atualização: 2026-09-26 (2) — CI/CD seguro (lint restaurado, CodeQL, npm audit — gate em `critical` até o upgrade do NestJS), fix de validação em `youtubeUrl`. Anterior: 2026-09-26 — rename AEVONFIT → PulseRx (código, package.json, docker-compose dev, docs; VPS/domínio/DB de produção ficam para depois). Anterior: 2026-08-28 — adicionado o papel admin, módulo /admin, e o campo User.aiImportEnabled._

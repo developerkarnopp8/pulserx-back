@@ -121,6 +121,7 @@ describe('PdfImportService', () => {
   });
 
   it('notifica todos os admins quando o erro é de crédito esgotado da Anthropic', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
     const Anthropic = require('@anthropic-ai/sdk').default;
     const creditError = new Anthropic.BadRequestError(
       400,
@@ -144,6 +145,7 @@ describe('PdfImportService', () => {
   });
 
   it('não duplica notificação de crédito esgotado se já existe uma não-lida pro mesmo admin', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
     const Anthropic = require('@anthropic-ai/sdk').default;
     const creditError = new Anthropic.BadRequestError(
       400,
