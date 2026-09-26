@@ -7,6 +7,20 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencias"
+    # Majors do NestJS/TypeScript precisam de upgrade coordenado (10→12: common, core,
+    # platform-express, swagger, config... em lockstep) — PR isolado de um pacote falha no
+    # CI e vira ruído. Ignorados aqui até existir o upgrade dedicado (dívida registrada no
+    # CLAUDE.md, gate do npm audit em `critical` até lá); minor/patch seguem normalmente.
+    ignore:
+      - dependency-name: "@nestjs/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+    # Um PR só pra todos os minor/patch — todos mexem no package-lock.json, então PRs
+    # separados ficam em conflito entre si assim que o primeiro é mergeado.
+    groups:
+      minor-e-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
