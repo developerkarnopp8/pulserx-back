@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - run: npm ci
@@ -35,17 +35,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
       - run: npm ci
-      # audit-level=critical (não "high"): hoje há 4 vulnerabilidades Altas reais em
-      # produção (multer/qs/js-yaml/lodash, puxadas por @nestjs/platform-express,
-      # @nestjs/swagger, @nestjs/config — DoS e prototype pollution, não RCE) que só
-      # fecham de verdade com NestJS 10→12 (major, breaking change, fora do escopo
-      # deste PR). Decisão do dono (2026-09-26): não travar o CI nisso agora, travar
-      # em "critical" e reapertar pra "high" quando o upgrade do NestJS acontecer —
-      # ver CLAUDE.md.
-      - run: npm audit --omit=dev --audit-level=critical
+      # Produção está com 0 vulnerabilidades desde o upgrade do NestJS 10→12 (as 4 Altas de
+      # multer/qs/js-yaml/lodash fecharam). As que sobram são só de devDependencies
+      # (ferramentas de build/lint), fora do --omit=dev.
+      - run: npm audit --omit=dev --audit-level=high
 
   codeql:
     name: Segurança — CodeQL (SAST)
