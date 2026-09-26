@@ -3,6 +3,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { TrainingPlansService } from './training-plans.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
+import { SubscriptionAccessService } from '../subscriptions/subscription-access.service';
 
 /**
  * Cobre o achado 1 da revisão final: `fullPlanInclude` precisa filtrar
@@ -38,10 +40,18 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
     }),
   });
 
+  let planAccess: { resolveByPlanId: jest.Mock };
+  let subscriptionAccess: { getViewableCategories: jest.Mock; canAccessCategory: jest.Mock };
+
   beforeEach(async () => {
     prisma = {
       student: { findUnique: jest.fn() },
       trainingPlan: { findUnique: jest.fn(), findMany: jest.fn() },
+    };
+    planAccess = { resolveByPlanId: jest.fn() };
+    subscriptionAccess = {
+      getViewableCategories: jest.fn().mockResolvedValue(['CORE', 'LPO', 'PERFORMANCE']),
+      canAccessCategory: jest.fn(),
     };
 
     const module = await Test.createTestingModule({
@@ -49,13 +59,15 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
         TrainingPlansService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: planAccess },
+        { provide: SubscriptionAccessService, useValue: subscriptionAccess },
       ],
     }).compile();
 
     service = module.get(TrainingPlansService);
   });
 
-  it('findByStudent filtra workoutLogs/workoutSkips pelo userId do aluno dono (não pelo id de quem pediu)', async () => {
+  it('findByStudent (aluno) filtra workoutLogs/workoutSkips pelo userId do aluno dono (não pelo id de quem pediu)', async () => {
     prisma.student.findUnique.mockResolvedValue({ coachId: 'coach-1', userId: 'athlete-1' });
     prisma.trainingPlan.findMany.mockResolvedValue([]);
 
@@ -63,6 +75,38 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
 
     expect(prisma.trainingPlan.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ include: expectedInclude('athlete-1') }),
+    );
+  });
+
+  it('findByStudent (coach dono) lista só os planos individuais do aluno, com o progresso do aluno', async () => {
+    prisma.student.findUnique.mockResolvedValue({ coachId: 'coach-1', userId: 'athlete-1' });
+    prisma.trainingPlan.findMany.mockResolvedValue([]);
+
+    await service.findByStudent('student-1', { id: 'coach-1', role: 'coach' });
+
+    expect(prisma.trainingPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { studentId: 'student-1' }, include: expectedInclude('athlete-1') }),
+    );
+  });
+
+  it('findByStudent (aluno) inclui os planos compartilhados PUBLICADOS do coach dele, só nas categorias liberadas', async () => {
+    prisma.student.findUnique.mockResolvedValue({ coachId: 'coach-1', userId: 'athlete-1' });
+    prisma.trainingPlan.findMany.mockResolvedValue([]);
+    subscriptionAccess.getViewableCategories.mockResolvedValue(['LPO']);
+
+    await service.findByStudent('student-1', athleteUser);
+
+    expect(subscriptionAccess.getViewableCategories).toHaveBeenCalledWith('student-1');
+    expect(prisma.trainingPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          category: { in: ['LPO'] },
+          OR: [
+            { studentId: 'student-1', scope: 'INDIVIDUAL' },
+            { scope: 'SHARED', published: true, coachId: 'coach-1' },
+          ],
+        },
+      }),
     );
   });
 
@@ -76,23 +120,61 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
     expect(prisma.trainingPlan.findMany).not.toHaveBeenCalled();
   });
 
-  it('findById filtra workoutLogs/workoutSkips pelo userId do aluno dono do plano, mesmo quando é o coach que consulta', async () => {
+  it('findByStudent lança NotFoundException quando o aluno não existe', async () => {
+    prisma.student.findUnique.mockResolvedValue(null);
+    await expect(service.findByStudent('x', athleteUser)).rejects.toThrow(NotFoundException);
+  });
+
+  it('findById filtra workoutLogs/workoutSkips pelo aluno dono do plano individual, mesmo quando é o coach que consulta', async () => {
     const coachUser = { id: 'coach-1', role: 'coach' };
-    prisma.trainingPlan.findUnique
-      .mockResolvedValueOnce({ coachId: 'coach-1', student: { userId: 'athlete-1' } }) // assertCanViewPlan
-      .mockResolvedValueOnce({ id: 'plan-1' }); // busca final
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: 'athlete-1' });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ id: 'plan-1' });
 
     await service.findById('plan-1', coachUser);
 
+    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', coachUser);
     expect(prisma.trainingPlan.findUnique).toHaveBeenLastCalledWith(
       expect.objectContaining({ include: expectedInclude('athlete-1') }),
     );
   });
 
-  it('findById lança NotFoundException quando o plano não existe', async () => {
-    prisma.trainingPlan.findUnique.mockResolvedValueOnce(null);
+  it('findById num plano compartilhado visto pelo coach filtra pelo id do coach (nunca traz progresso de aluno)', async () => {
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: null });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ id: 'plan-1' });
+
+    await service.findById('plan-1', { id: 'coach-1', role: 'coach' });
+
+    expect(prisma.trainingPlan.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({ include: expectedInclude('coach-1') }),
+    );
+  });
+
+  it('findById propaga o Forbidden do acesso sem ler o plano', async () => {
+    planAccess.resolveByPlanId.mockRejectedValue(new ForbiddenException());
+
+    await expect(service.findById('plan-1', athleteUser)).rejects.toThrow(ForbiddenException);
+    expect(prisma.trainingPlan.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('findById lança NotFoundException quando o plano some entre a checagem e a leitura', async () => {
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: 'athlete-1' });
+    prisma.trainingPlan.findUnique.mockResolvedValue(null);
 
     await expect(service.findById('plano-inexistente', athleteUser)).rejects.toThrow(NotFoundException);
+  });
+
+  it('findSharedByCoach lista só os SHARED do próprio coach, com filtro opcional de categoria', async () => {
+    prisma.trainingPlan.findMany.mockResolvedValue([]);
+
+    await service.findSharedByCoach('coach-1');
+    expect(prisma.trainingPlan.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { coachId: 'coach-1', scope: 'SHARED' } }),
+    );
+
+    await service.findSharedByCoach('coach-1', 'CORE' as any);
+    expect(prisma.trainingPlan.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { coachId: 'coach-1', scope: 'SHARED', category: 'CORE' } }),
+    );
   });
 });
 
@@ -119,6 +201,8 @@ describe('TrainingPlansService.getWeeklyCompletionByDayIndex', () => {
         TrainingPlansService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn() } },
       ],
     }).compile();
 
@@ -234,6 +318,8 @@ describe('TrainingPlansService.create — normalização de startDate', () => {
         TrainingPlansService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn() } },
       ],
     }).compile();
 
@@ -292,6 +378,8 @@ describe('TrainingPlansService.create — checagem de dono do aluno', () => {
         TrainingPlansService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn() } },
       ],
     }).compile();
 
@@ -322,36 +410,43 @@ describe('TrainingPlansService.create — checagem de dono do aluno', () => {
   });
 });
 
-describe('TrainingPlansService.publish — notifica o atleta', () => {
+describe('TrainingPlansService.publish — notifica', () => {
   let service: TrainingPlansService;
   let prisma: any;
   let notificationsService: { create: jest.Mock };
+  let subscriptionAccess: { filterStudentsWithCategory: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
+      student: { findMany: jest.fn() },
       trainingPlan: {
         findUnique: jest.fn().mockResolvedValue({ coachId: 'coach-1' }),
         update: jest.fn().mockResolvedValue({
           id: 'plan-1',
           title: 'Mesociclo 1',
+          scope: 'INDIVIDUAL',
+          category: 'PERFORMANCE',
           student: { userId: 'athlete-1' },
         }),
       },
     };
     notificationsService = { create: jest.fn() };
+    subscriptionAccess = { filterStudentsWithCategory: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
         TrainingPlansService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: subscriptionAccess },
       ],
     }).compile();
 
     service = module.get(TrainingPlansService);
   });
 
-  it('notifica o atleta dono do plano quando o coach publica', async () => {
+  it('notifica o atleta dono do plano individual quando o coach publica', async () => {
     await service.publish('plan-1', 'coach-1');
 
     expect(notificationsService.create).toHaveBeenCalledWith(
@@ -361,5 +456,176 @@ describe('TrainingPlansService.publish — notifica o atleta', () => {
       'Seu coach publicou "Mesociclo 1"',
       '/athlete/weekly',
     );
+    expect(prisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it('plano compartilhado: notifica só os alunos do coach que enxergam a categoria', async () => {
+    prisma.trainingPlan.update.mockResolvedValue({
+      id: 'plan-2', title: 'Core — Março', scope: 'SHARED', category: 'CORE', student: null,
+    });
+    prisma.student.findMany.mockResolvedValue([
+      { id: 's1', userId: 'u1' },
+      { id: 's2', userId: 'u2' },
+    ]);
+    subscriptionAccess.filterStudentsWithCategory.mockResolvedValue(['s1']);
+
+    await service.publish('plan-2', 'coach-1');
+
+    expect(prisma.student.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1' } }));
+    expect(subscriptionAccess.filterStudentsWithCategory).toHaveBeenCalledWith(['s1', 's2'], 'CORE');
+    expect(notificationsService.create).toHaveBeenCalledTimes(1);
+    expect(notificationsService.create).toHaveBeenCalledWith(
+      'u1', 'plan_published', 'Novo plano publicado', 'Seu coach publicou "Core — Março"', '/athlete/weekly',
+    );
+  });
+
+  it('plano compartilhado: notifica em lotes de 25 (sem estourar o pool do banco)', async () => {
+    prisma.trainingPlan.update.mockResolvedValue({
+      id: 'plan-2', title: 'Core', scope: 'SHARED', category: 'CORE', student: null,
+    });
+    const students = Array.from({ length: 60 }, (_, i) => ({ id: `s${i}`, userId: `u${i}` }));
+    prisma.student.findMany.mockResolvedValue(students);
+    subscriptionAccess.filterStudentsWithCategory.mockResolvedValue(students.map(s => s.id));
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    notificationsService.create.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(r => setTimeout(r, 1));
+      inFlight--;
+    });
+
+    await service.publish('plan-2', 'coach-1');
+
+    expect(notificationsService.create).toHaveBeenCalledTimes(60);
+    expect(maxInFlight).toBeLessThanOrEqual(25);
+  });
+
+  it('nega publicar plano de outro coach (IDOR) sem notificar ninguém', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+
+    await expect(service.publish('plan-1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.trainingPlan.update).not.toHaveBeenCalled();
+    expect(notificationsService.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('TrainingPlansService.createShared', () => {
+  let service: TrainingPlansService;
+  let prisma: any;
+  let tx: any;
+
+  beforeEach(async () => {
+    tx = {
+      trainingPlan: {
+        create: jest.fn().mockResolvedValue({ id: 'plan-1' }),
+        findUnique: jest.fn().mockResolvedValue({ id: 'plan-1' }),
+      },
+      week: { create: jest.fn().mockResolvedValue({ id: 'week-1' }) },
+      trainingDay: { createMany: jest.fn() },
+    };
+    prisma = { $transaction: jest.fn(async (cb: any) => cb(tx)) };
+
+    const module = await Test.createTestingModule({
+      providers: [
+        TrainingPlansService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(TrainingPlansService);
+  });
+
+  it('cria plano SHARED do coach, sem aluno, com a categoria pedida e 4 semanas × 6 dias', async () => {
+    await service.createShared('coach-1', { category: 'LPO', month: 1, title: 'LPO — Março', startDate: '2026-03-11' } as any);
+
+    const data = tx.trainingPlan.create.mock.calls[0][0].data;
+    expect(data).toEqual({
+      coachId: 'coach-1',
+      scope: 'SHARED',
+      category: 'LPO',
+      month: 1,
+      title: 'LPO — Março',
+      startDate: expect.any(Date),
+    });
+    expect(data.startDate.toISOString().slice(0, 10)).toBe('2026-03-09');
+    expect(data).not.toHaveProperty('studentId');
+    expect(tx.week.create).toHaveBeenCalledTimes(4);
+    expect(tx.trainingDay.createMany).toHaveBeenCalledTimes(4);
+  });
+
+  it('o coach é sempre o do token — nada vindo do body define dono/escopo', async () => {
+    await service.createShared('coach-1', {
+      category: 'CORE', month: 1, title: 'x', startDate: '2026-03-09', coachId: 'coach-9', scope: 'INDIVIDUAL', studentId: 's1',
+    } as any);
+
+    const data = tx.trainingPlan.create.mock.calls[0][0].data;
+    expect(data.coachId).toBe('coach-1');
+    expect(data.scope).toBe('SHARED');
+    expect(data).not.toHaveProperty('studentId');
+  });
+});
+
+describe('TrainingPlansService.initializeWeeks — progresso exibido', () => {
+  let service: TrainingPlansService;
+  let prisma: any;
+  let planAccess: { resolveByPlanId: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = {
+      trainingPlan: { findUnique: jest.fn() },
+      week: { count: jest.fn(), create: jest.fn().mockResolvedValue({ id: 'w' }) },
+      trainingDay: { createMany: jest.fn() },
+      $transaction: jest.fn(async (cb: any) => cb(prisma)),
+    };
+    planAccess = { resolveByPlanId: jest.fn() };
+    const module = await Test.createTestingModule({
+      providers: [
+        TrainingPlansService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: planAccess },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(TrainingPlansService);
+  });
+
+  it('plano individual já inicializado: devolve com o progresso do aluno', async () => {
+    prisma.trainingPlan.findUnique
+      .mockResolvedValueOnce({ coachId: 'coach-1' }) // assertCoachOwnsPlan
+      .mockResolvedValueOnce({ id: 'plan-1' });
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: 'athlete-1' });
+    prisma.week.count.mockResolvedValue(4);
+
+    await service.initializeWeeks('plan-1', 'coach-1');
+
+    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', { id: 'coach-1', role: 'coach' });
+    expect(prisma.trainingPlan.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({ include: expect.objectContaining({ weeks: expect.anything() }) }),
+    );
+    expect(prisma.week.create).not.toHaveBeenCalled();
+  });
+
+  it('plano compartilhado sem semanas: cria 4 × 6 e usa o id do coach como filtro (sem progresso)', async () => {
+    prisma.trainingPlan.findUnique
+      .mockResolvedValueOnce({ coachId: 'coach-1' })
+      .mockResolvedValueOnce({ id: 'plan-s' });
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: null });
+    prisma.week.count.mockResolvedValue(0);
+
+    await service.initializeWeeks('plan-s', 'coach-1');
+
+    expect(prisma.week.create).toHaveBeenCalledTimes(4);
+    expect(prisma.trainingDay.createMany).toHaveBeenCalledTimes(4);
+  });
+
+  it('coach de outro plano: barrado antes de qualquer escrita', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValueOnce({ coachId: 'coach-9' });
+    await expect(service.initializeWeeks('plan-s', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.week.create).not.toHaveBeenCalled();
   });
 });

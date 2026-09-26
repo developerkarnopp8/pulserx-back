@@ -1,8 +1,9 @@
 import {
   IsString, IsNumber, IsBoolean, IsOptional, IsEnum,
-  IsUrl, Min, Max, IsDateString,
+  IsUrl, IsIn, Min, Max, IsDateString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { TrainingCategory } from '@prisma/client';
 
 export enum SessionType {
   Mobility = 'Mobility',
@@ -30,6 +31,27 @@ export class CreatePlanDto {
   startDate: string;
 
   @ApiProperty({ example: 'Mês 1 — Programação Gustavo' })
+  @IsString()
+  title: string;
+}
+
+/** Categorias que aceitam plano compartilhado; PERFORMANCE é sempre individual. */
+export const SHARED_CATEGORIES = [TrainingCategory.CORE, TrainingCategory.LPO] as const;
+
+export class CreateSharedPlanDto {
+  @ApiProperty({ enum: SHARED_CATEGORIES })
+  @IsIn(SHARED_CATEGORIES as unknown as string[])
+  category: (typeof SHARED_CATEGORIES)[number];
+
+  @ApiProperty({ example: 1 })
+  @IsNumber()
+  month: number;
+
+  @ApiProperty({ example: '2026-03-09', description: 'Segunda-feira da Semana 1 (calendário do plano, igual pra todos os alunos) — YYYY-MM-DD' })
+  @IsDateString()
+  startDate: string;
+
+  @ApiProperty({ example: 'Core — Março' })
   @IsString()
   title: string;
 }

@@ -1,6 +1,7 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../students/students.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
 import { CheckoutWorkoutSessionDto } from './dto/checkout-workout-session.dto';
 
 type AuthUser = { id: string; role: string };
@@ -10,6 +11,7 @@ export class WorkoutSessionsService {
   constructor(
     private prisma: PrismaService,
     private studentsService: StudentsService,
+    private planAccess: PlanAccessService,
   ) {}
 
   /** Grava a sessão executada. Chamado no "Finalizar treino" do atleta. */
@@ -23,14 +25,14 @@ export class WorkoutSessionsService {
     const session = await this.prisma.session.findUnique({
       where: { id: dto.sessionId },
       include: {
-        day: { include: { week: { include: { plan: { select: { studentId: true } } } } } },
+        day: { select: { week: { select: { planId: true } } } },
         exercises: { select: { id: true } },
       },
     });
     if (!session) throw new BadRequestException('Sessão não encontrada');
 
-    const studentId = session.day.week.plan.studentId;
-    await this.studentsService.findOne(studentId, user); // ownership: 403 se não for dono/self
+    const access = await this.planAccess.resolveByPlanId(session.day.week.planId, user); // ownership/assinatura: 403
+    if (access.isCoach) throw new ForbiddenException('Somente o aluno finaliza o treino.');
 
     const logs = await this.prisma.workoutLog.findMany({
       where: {
@@ -150,7 +152,10 @@ export class WorkoutSessionsService {
     const athleteId = student.userId;
 
     const session = await this.prisma.session.findFirst({
-      where: { id: sessionId, day: { week: { plan: { studentId } } } },
+      where: {
+        id: sessionId,
+        day: { week: { plan: { OR: [{ studentId }, { scope: 'SHARED', coachId: student.coachId }] } } },
+      },
       include: {
         exercises: {
           orderBy: { order: 'asc' },

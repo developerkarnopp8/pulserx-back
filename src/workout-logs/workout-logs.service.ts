@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkoutLogDto } from './dto/create-workout-log.dto';
 import { StudentsService } from '../students/students.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
 
 type AuthUser = { id: string; role: string };
 
@@ -10,12 +11,13 @@ export class WorkoutLogsService {
   constructor(
     private prisma: PrismaService,
     private studentsService: StudentsService,
+    private planAccess: PlanAccessService,
   ) {}
 
-  /** Só o atleta dono do plano em que o exercício está (via StudentsService) pode registrar o log. */
+  /** Só o atleta com acesso ao plano do exercício (dono do individual, ou aluno do coach com a categoria liberada no compartilhado) registra o log. */
   async logExercise(user: AuthUser, dto: CreateWorkoutLogDto) {
-    const { studentId } = await this.loadExerciseContext(dto.exerciseId);
-    await this.studentsService.findOne(studentId, user);
+    const access = await this.planAccess.resolveByExerciseId(dto.exerciseId, user);
+    if (access.isCoach) throw new ForbiddenException('Somente o aluno registra a execução do treino.');
 
     return this.prisma.workoutLog.create({
       data: {
@@ -30,15 +32,6 @@ export class WorkoutLogsService {
         exercise: { select: { id: true, name: true, sessionId: true } },
       },
     });
-  }
-
-  private async loadExerciseContext(exerciseId: string) {
-    const exercise = await this.prisma.exercise.findUnique({
-      where: { id: exerciseId },
-      include: { session: { include: { day: { include: { week: { include: { plan: true } } } } } } },
-    });
-    if (!exercise) throw new NotFoundException('Exercício não encontrado');
-    return { studentId: exercise.session.day.week.plan.studentId };
   }
 
   async getHistory(athleteId: string, limit = 50) {

@@ -29,6 +29,13 @@ export class SubscriptionAccessService {
       where: { studentId },
       include: { plan: { select: { categories: true } } },
     });
+    return SubscriptionAccessService.grantedCategories(subscription, now);
+  }
+
+  private static grantedCategories(
+    subscription: { status: SubscriptionStatus; trialEndsAt: Date | null; plan: { categories: TrainingCategory[] } } | null,
+    now: Date,
+  ): TrainingCategory[] {
     if (!subscription || !GRANTING_STATUSES.includes(subscription.status)) return [];
 
     const trialExpired =
@@ -38,6 +45,26 @@ export class SubscriptionAccessService {
     if (trialExpired) return [];
 
     return subscription.plan.categories;
+  }
+
+  /** Dos alunos informados, os que enxergam a categoria — em 1–2 consultas, não uma por aluno. */
+  async filterStudentsWithCategory(studentIds: string[], category: TrainingCategory, now: Date = new Date()): Promise<string[]> {
+    if (studentIds.length === 0) return [];
+    if (!(await this.isEnforced())) return studentIds;
+
+    const subscriptions = await this.prisma.subscription.findMany({
+      where: { studentId: { in: studentIds } },
+      include: { plan: { select: { categories: true } } },
+    });
+    return subscriptions
+      .filter(s => SubscriptionAccessService.grantedCategories(s, now).includes(category))
+      .map(s => s.studentId);
+  }
+
+  /** Categorias que o aluno pode ver agora: todas quando o bloqueio está desligado, senão as da assinatura. */
+  async getViewableCategories(studentId: string): Promise<TrainingCategory[]> {
+    if (!(await this.isEnforced())) return Object.values(TrainingCategory);
+    return this.getAccessibleCategories(studentId);
   }
 
   async canAccessCategory(studentId: string, category: TrainingCategory): Promise<boolean> {

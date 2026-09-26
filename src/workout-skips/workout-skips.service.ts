@@ -1,6 +1,6 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { StudentsService } from '../students/students.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
 import { MessagesService } from '../messages/messages.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateWorkoutSkipDto } from './dto/create-workout-skip.dto';
@@ -18,7 +18,7 @@ const REASON_LABEL: Record<string, string> = {
 export class WorkoutSkipsService {
   constructor(
     private prisma: PrismaService,
-    private studentsService: StudentsService,
+    private planAccess: PlanAccessService,
     private messagesService: MessagesService,
     private notificationsService: NotificationsService,
   ) {}
@@ -32,7 +32,8 @@ export class WorkoutSkipsService {
       ? await this.loadExerciseContext(dto.exerciseId)
       : await this.loadSessionContext(dto.sessionId!);
 
-    const student = await this.studentsService.findOne(target.studentId, user);
+    const access = await this.planAccess.resolveByPlanId(target.planId, user);
+    if (access.isCoach) throw new ForbiddenException('Somente o aluno pula treino.');
 
     const skip = await this.prisma.workoutSkip.create({
       data: {
@@ -48,13 +49,13 @@ export class WorkoutSkipsService {
     const reasonLabel = REASON_LABEL[dto.reason] ?? dto.reason;
     const decisionLabel = dto.decision === 'Postponed' ? 'vai fazer depois' : 'não vai fazer';
     const content = `Pulei "${target.name}" — motivo: ${reasonLabel}. ${decisionLabel}.${dto.note ? ` Nota: ${dto.note}` : ''}`;
-    await this.messagesService.send(user.id, student.coachId, content, true);
+    await this.messagesService.send(user.id, access.coachId, content, true);
     await this.notificationsService.create(
-      student.coachId,
+      access.coachId,
       'workout_skipped',
       'Aluno pulou um treino',
       content,
-      `/coach/plan-builder/${target.studentId}`,
+      `/coach/plan-builder/${access.studentId}`,
     );
 
     return skip;
@@ -66,7 +67,7 @@ export class WorkoutSkipsService {
       include: { session: { include: { day: { include: { week: { include: { plan: true } } } } } } },
     });
     if (!exercise) throw new NotFoundException('Exercício não encontrado');
-    return { name: exercise.name, studentId: exercise.session.day.week.plan.studentId };
+    return { name: exercise.name, planId: exercise.session.day.week.planId };
   }
 
   private async loadSessionContext(sessionId: string) {
@@ -75,7 +76,7 @@ export class WorkoutSkipsService {
       include: { day: { include: { week: { include: { plan: true } } } } },
     });
     if (!session) throw new NotFoundException('Sessão não encontrada');
-    return { name: session.name, studentId: session.day.week.plan.studentId };
+    return { name: session.name, planId: session.day.week.planId };
   }
 
   async getPendingCountByStudent(coachId: string) {
@@ -97,19 +98,23 @@ export class WorkoutSkipsService {
           },
         ],
       },
-      include: {
-        exercise: { include: { session: { include: { day: { include: { week: { include: { plan: true } } } } } } } },
-        session:  { include: { day: { include: { week: { include: { plan: true } } } } } },
-      },
+      select: { exerciseId: true, sessionId: true, athleteId: true },
     });
+
+    // Quem pulou é sempre o aluno (skip.athleteId) — vale para plano individual e compartilhado
+    // (que não tem studentId). Só entram alunos deste coach.
+    const students = await this.prisma.student.findMany({
+      where: { coachId },
+      select: { id: true, userId: true },
+    });
+    const studentIdByUser = new Map(students.map(s => [s.userId, s.id]));
 
     // Um mesmo exercício/sessão pode ter sido pulado várias vezes (o item continua
     // pendente até ser feito) — dedupe por alvo (exerciseId ?? sessionId) pra cada
     // aluno contar no máximo 1 vez no badge de pendências.
     const targetsByStudent = new Map<string, Set<string>>();
     for (const skip of skips) {
-      const studentId = skip.exercise?.session.day.week.plan.studentId
-        ?? skip.session?.day.week.plan.studentId;
+      const studentId = studentIdByUser.get(skip.athleteId);
       const targetKey = skip.exerciseId ?? skip.sessionId;
       if (!studentId || !targetKey) continue;
       if (!targetsByStudent.has(studentId)) targetsByStudent.set(studentId, new Set());

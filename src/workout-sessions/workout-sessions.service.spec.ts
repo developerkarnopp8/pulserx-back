@@ -3,6 +3,7 @@ import { ForbiddenException, BadRequestException, NotFoundException } from '@nes
 import { WorkoutSessionsService } from './workout-sessions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../students/students.service';
+import { PlanAccessService } from '../subscriptions/plan-access.service';
 
 const athleteUser = { id: 'athlete-1', role: 'athlete' };
 
@@ -11,7 +12,7 @@ function buildPrisma(overrides: any = {}) {
     session: {
       findUnique: jest.fn().mockResolvedValue({
         id: 'session-1',
-        day: { week: { plan: { studentId: 'student-1', student: { userId: 'athlete-1' } } } },
+        day: { week: { planId: 'plan-1' } },
         exercises: [{ id: 'ex-1' }, { id: 'ex-2' }],
       }),
     },
@@ -32,16 +33,17 @@ function buildPrisma(overrides: any = {}) {
 describe('WorkoutSessionsService.checkout', () => {
   let service: WorkoutSessionsService;
   let prisma: any;
-  let studentsService: { findOne: jest.Mock };
+  let planAccess: { resolveByPlanId: jest.Mock };
 
   beforeEach(async () => {
     prisma = buildPrisma();
-    studentsService = { findOne: jest.fn().mockResolvedValue({ id: 'student-1', userId: 'athlete-1', coachId: 'coach-1' }) };
+    planAccess = { resolveByPlanId: jest.fn().mockResolvedValue({ isCoach: false, athleteId: 'athlete-1', studentId: 'student-1' }) };
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: StudentsService, useValue: studentsService },
+        { provide: StudentsService, useValue: { findOne: jest.fn() } },
+        { provide: PlanAccessService, useValue: planAccess },
       ],
     }).compile();
     service = module.get(WorkoutSessionsService);
@@ -49,14 +51,20 @@ describe('WorkoutSessionsService.checkout', () => {
 
   const dto = { sessionId: 'session-1', startedAt: '2026-08-28T10:00:00.000Z', finishedAt: '2026-08-28T10:45:00.000Z' };
 
-  it('confere posse do aluno antes de gravar', async () => {
+  it('confere o acesso ao plano da sessão (individual ou compartilhado) antes de gravar', async () => {
     await service.checkout(athleteUser, dto);
-    expect(studentsService.findOne).toHaveBeenCalledWith('student-1', athleteUser);
+    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', athleteUser);
   });
 
   it('propaga ForbiddenException sem gravar nada', async () => {
-    studentsService.findOne.mockRejectedValue(new ForbiddenException());
+    planAccess.resolveByPlanId.mockRejectedValue(new ForbiddenException());
     await expect(service.checkout(athleteUser, dto)).rejects.toThrow(ForbiddenException);
+    expect(prisma.workoutSession.create).not.toHaveBeenCalled();
+  });
+
+  it('nega o coach: só o aluno finaliza o treino', async () => {
+    planAccess.resolveByPlanId.mockResolvedValue({ isCoach: true, athleteId: 'athlete-1', studentId: 'student-1' });
+    await expect(service.checkout({ id: 'coach-1', role: 'coach' }, dto)).rejects.toThrow(ForbiddenException);
     expect(prisma.workoutSession.create).not.toHaveBeenCalled();
   });
 
@@ -152,6 +160,7 @@ describe('WorkoutSessionsService.listMine', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: { findOne: jest.fn() } },
       ],
@@ -206,6 +215,7 @@ describe('WorkoutSessionsService.studentSummary', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: studentsService },
       ],
@@ -287,6 +297,7 @@ describe('WorkoutSessionsService.sessionDetail', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: studentsService },
       ],
@@ -323,7 +334,10 @@ describe('WorkoutSessionsService.sessionDetail', () => {
     });
     expect(prisma.session.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'session-1', day: { week: { plan: { studentId: 'student-1' } } } },
+        where: {
+          id: 'session-1',
+          day: { week: { plan: { OR: [{ studentId: 'student-1' }, { scope: 'SHARED', coachId: 'coach-1' }] } } },
+        },
         include: expect.objectContaining({
           exercises: expect.objectContaining({
             include: { workoutLogs: expect.objectContaining({ where: { athleteId: 'athlete-1' } }) },
@@ -364,6 +378,7 @@ describe('WorkoutSessionsService.coachAvgDuration', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: { findOne: jest.fn() } },
       ],

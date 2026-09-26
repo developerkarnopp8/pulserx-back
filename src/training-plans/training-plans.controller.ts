@@ -1,11 +1,12 @@
 import {
-  Controller, Get, Post, Patch, Delete, Body, Param,
+  Controller, Get, Post, Patch, Delete, Body, Param, Query, ParseEnumPipe,
   Request, UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { TrainingCategory } from '@prisma/client';
 import { TrainingPlansService } from './training-plans.service';
 import {
-  CreatePlanDto, UpdatePlanDto, CreateWeekDto, CreateDayDto,
+  CreatePlanDto, CreateSharedPlanDto, UpdatePlanDto, CreateWeekDto, CreateDayDto,
   CreateSessionDto, CreateExerciseDto, UpdateExerciseDto,
 } from './dto/training-plan.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +33,23 @@ export class TrainingPlansController {
   @ApiOperation({ summary: '% real de conclusão por dia da semana, agregado entre todos os alunos do coach (dashboard)' })
   getWeeklyCompletion(@Request() req: any) {
     return this.service.getWeeklyCompletionByDayIndex(req.user.id);
+  }
+
+  @Roles('coach')
+  @Get('shared')
+  @ApiOperation({ summary: 'Lista os planos compartilhados (Core/LPO) do coach, opcionalmente por categoria' })
+  findShared(
+    @Request() req: any,
+    @Query('category', new ParseEnumPipe(TrainingCategory, { optional: true })) category?: TrainingCategory,
+  ) {
+    return this.service.findSharedByCoach(req.user.id, category);
+  }
+
+  @Roles('coach')
+  @Post('shared')
+  @ApiOperation({ summary: 'Cria plano compartilhado (Core ou LPO) — sem aluno; pertence ao coach' })
+  createShared(@Request() req: any, @Body() dto: CreateSharedPlanDto) {
+    return this.service.createShared(req.user.id, dto);
   }
 
   @Get(':id')
