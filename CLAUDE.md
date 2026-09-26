@@ -4,7 +4,16 @@
 
 > **Rename (2026-09-26):** o projeto se chamava AEVONFIT/AevonFit; agora é **PulseRx** (repo `pulserx-back`). O rename cobriu código, `package.json`, docker-compose de desenvolvimento, docs. **Domínio, CORS e `docker-compose.prod.yml` (nome dos containers/DB reais em produção) continuam com "aevonfit" até uma migração dedicada da VPS** — mudar isso agora quebraria o CORS/DNS reais sem um plano de janela de manutenção. **`@aevonfit.com` como domínio de e-mail (contas de coach/atleta/admin, prod e local) é mantido de propósito, por decisão do dono** — é só o domínio de e-mail interno, não faz parte da marca do produto; não renomear em nenhum ambiente, incluindo seed local.
 
-> **CI/CD (2026-09-26):** `.github/workflows/ci.yml` criado do zero (lint + testes + build + CodeQL + `npm audit`). Restaurado `.eslintrc.js` (os pacotes ESLint 8/typescript-eslint 6 já estavam instalados, só faltava a config) — achado ao rodar: `training-plans/dto/training-plan.dto.ts` tinha o import de `IsUrl` nunca aplicado, ou seja, `CreateExerciseDto.youtubeUrl` aceitava qualquer valor sem validação de formato (corrigido, com teste cobrindo inclusive esquema `javascript:`). **Dívida técnica pendente, decisão do dono:** `npm audit --omit=dev` tem 4 Altas reais em produção (`multer`/`qs`/`js-yaml`/`lodash`, puxadas por `@nestjs/platform-express`/`@nestjs/swagger`/`@nestjs/config` — DoS e prototype pollution, não RCE) que só fecham com **NestJS 10→12 (major, breaking change)** — fora do escopo do CI. O gate do CI hoje trava em `--audit-level=critical` (não `high`) até essa migração acontecer; reapertar pra `high` quando o upgrade for feito. **`.github/dependabot.yml` ignora majors de `@nestjs/*` e `typescript` pelo mesmo motivo (PR isolado falha no CI) — TEMPORÁRIO: remover esse `ignore` junto com a migração do NestJS 10→12.** Os alertas de segurança do Dependabot (30 abertos em 2026-09-26) continuam visíveis em Security → Dependabot independente do `ignore`.
+> **CI/CD (2026-09-26):** `.github/workflows/ci.yml` criado do zero (lint + testes + build + CodeQL + `npm audit`). Restaurado `.eslintrc.js` (os pacotes ESLint 8/typescript-eslint 6 já estavam instalados, só faltava a config) — achado ao rodar: `training-plans/dto/training-plan.dto.ts` tinha o import de `IsUrl` nunca aplicado, ou seja, `CreateExerciseDto.youtubeUrl` aceitava qualquer valor sem validação de formato (corrigido, com teste cobrindo inclusive esquema `javascript:`). (A dívida do NestJS registrada aqui antes foi paga — ver o bloco "Upgrade NestJS 10→12" abaixo.)
+
+> **Upgrade NestJS 10→12 (2026-09-26):** `@nestjs/common/core/platform-express/platform-socket.io/websockets/testing` 12.1, `swagger` 12.0, `config` 12.0, `jwt` 12.0, `passport` 12.0, `throttler` 6.7 (linha 6, suporta Nest 12), `@types/express` 5. **`npm audit --omit=dev`: 0 vulnerabilidades** (as 4 Altas de multer/qs/js-yaml/lodash fecharam); gate do CI voltou pra `--audit-level=high` e o `ignore` de `@nestjs/*` saiu do Dependabot (fica só `typescript`, `prisma` e `@prisma/client`). O que mudou de verdade, além de versões:
+> - **Node 24 (Dockerfile `node:24-slim` e CI).** O Nest 12 é **ESM-only** (`"type": "module"`); o app continua compilando pra CommonJS e o Node carrega os pacotes via `require(esm)`. O `file-type` 22 (dependência de produção do `@nestjs/common`, usado pelo `addFileTypeValidator` do upload de PDF) exige Node ≥ 22, e o **Jest só carrega ESM via `require` no Node ≥ 24.9** — por isso Node 24 (LTS) e não 22.
+> - **Testes rodam com `node --experimental-vm-modules node_modules/jest/bin/jest.js`** (scripts `test`, `test:watch`, `test:cov`). Sem a flag, todo spec que importa `@nestjs/*` falha com "Must use import to load ES Module". Não usar `jest` direto.
+> - `@nestjs/schematics` ficou na **10** (a 12 exige TypeScript ≥ 6; é só o gerador do `nest g`, fora do build). Subir junto com a migração do TypeScript.
+> - `JwtModule`: `expiresIn` agora é tipado como `number | StringValue`; o valor de `JWT_EXPIRES_IN` (string de env) leva cast em `auth.module.ts`.
+> - **`HttpThrottlerGuard`** (`src/common/http-throttler.guard.ts`) substitui o `ThrottlerGuard` global: o guard padrão quebra em handlers de WebSocket (`Cannot read properties of undefined (reading 'header')`, derrubava o `@SubscribeMessage('ping')`); agora o rate limit vale só pra HTTP (o socket é autenticado por JWT na conexão). **Atenção:** mensagens WebSocket ficam sem rate limit — hoje o único handler é o `ping` (só responde `pong`) e o chat entra por REST (`POST /messages`, com throttler HTTP), então não há brecha; **qualquer `@SubscribeMessage` novo que faça trabalho de verdade precisa do próprio limite por socket**.
+> - Upload de PDF ficou **mais rígido**: `addFileTypeValidator` agora confere os magic bytes (arquivo de texto declarado como `application/pdf` é barrado com 400; no Nest 10 só o mimetype era checado).
+> - Validado em runtime (não só por testes, que mockam tudo): login/JWT (expira em 7d), guards de papel (401/403), ValidationPipe, upload de PDF (texto→400, PDF real→passa e cai na IA), CORS, WebSocket (`ping`→`pong`, token inválido desconecta, **push de chat em tempo real** coach→atleta), throttler (429 na 6ª tentativa de login), Swagger e a **imagem Docker de produção** (`npm ci --omit=dev`) subindo.
 
 ## Visão Geral
 
@@ -14,7 +23,7 @@
 
 | Camada | Tecnologia |
 |--------|------------|
-| Runtime | Node.js 20+ |
+| Runtime | Node.js 24 (LTS) |
 | Framework | NestJS (TypeScript) |
 | ORM | Prisma |
 | Banco de dados | PostgreSQL 16 |
@@ -157,4 +166,4 @@ Movement (catálogo global ou customizado por coach — coachId opcional)
 
 ---
 
-_Última atualização: 2026-09-26 (2) — CI/CD seguro (lint restaurado, CodeQL, npm audit — gate em `critical` até o upgrade do NestJS), fix de validação em `youtubeUrl`. Anterior: 2026-09-26 — rename AEVONFIT → PulseRx (código, package.json, docker-compose dev, docs; VPS/domínio/DB de produção ficam para depois). Anterior: 2026-08-28 — adicionado o papel admin, módulo /admin, e o campo User.aiImportEnabled._
+_Última atualização: 2026-09-26 (3) — upgrade NestJS 10→12 (Node 24, Jest com vm-modules, HttpThrottlerGuard, audit gate em `high`). Anterior: 2026-09-26 (2) — CI/CD seguro (lint restaurado, CodeQL, npm audit — gate em `critical` até o upgrade do NestJS), fix de validação em `youtubeUrl`. Anterior: 2026-09-26 — rename AEVONFIT → PulseRx (código, package.json, docker-compose dev, docs; VPS/domínio/DB de produção ficam para depois). Anterior: 2026-08-28 — adicionado o papel admin, módulo /admin, e o campo User.aiImportEnabled._
