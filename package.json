@@ -52,7 +52,7 @@
     "@nestjs/cli": "^12.0.7",
     "@nestjs/schematics": "^10.0.0",
     "@nestjs/testing": "^12.1.0",
-    "@types/bcrypt": "^5.0.0",
+    "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.2.0",
