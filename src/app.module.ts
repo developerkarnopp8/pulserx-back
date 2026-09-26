@@ -20,6 +20,7 @@ import { PersonalRecordsModule } from './personal-records/personal-records.modul
 import { NotificationsModule } from './notifications/notifications.module';
 import { PdfImportModule } from './pdf-import/pdf-import.module';
 import { AdminModule } from './admin/admin.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { AdminModule } from './admin/admin.module';
     NotificationsModule,
     PdfImportModule,
     AdminModule,
+    SubscriptionsModule,
   ],
   providers: [
     {
