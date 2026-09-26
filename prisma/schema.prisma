@@ -16,6 +16,33 @@ enum Role {
   admin
 }
 
+// ── v2: categorias, assinaturas e planos (ver docs/superpowers/specs/2026-09-26-v2-categorias-assinaturas-design.md) ──
+
+enum TrainingCategory {
+  CORE
+  LPO
+  PERFORMANCE
+}
+
+// SHARED = um plano por categoria, igual pra todos os assinantes (Core/LPO); INDIVIDUAL = por aluno (Performance).
+enum PlanScope {
+  SHARED
+  INDIVIDUAL
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+// Gateway ainda não decidido (Mercado Pago ou Asaas — spike na Rodada 4); por isso o schema é agnóstico.
+enum PaymentGateway {
+  MERCADO_PAGO
+  ASAAS
+}
+
 enum PaymentStatus {
   pending
   paid
@@ -33,31 +60,33 @@ enum SessionType {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         Role     @default(athlete)
-  aiImportEnabled Boolean @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(uuid())
+  name            String
+  email           String   @unique
+  passwordHash    String
+  role            Role     @default(athlete)
+  aiImportEnabled Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Relations
-  student          Student?          @relation("UserStudent")
-  coachStudents    Student[]         @relation("CoachStudents")
-  coachPlans       TrainingPlan[]    @relation("CoachPlans")
-  workoutLogs      WorkoutLog[]
-  exerciseLibrary  ExerciseLibrary[] @relation("CoachLibrary")
-  coachPayments    Payment[]         @relation("CoachPayments")
-  sentMessages     Message[]         @relation("SentMessages")
-  receivedMessages Message[]         @relation("ReceivedMessages")
-  workoutSkips     WorkoutSkip[]
-  hydrationLogs    HydrationLog[]
-  calorieLogs      CalorieLog[]
-  movements        Movement[]
-  personalRecords  PersonalRecord[]
-  notifications    Notification[]
-  workoutSessions  WorkoutSession[]
+  student           Student?           @relation("UserStudent")
+  coachStudents     Student[]          @relation("CoachStudents")
+  coachPlans        TrainingPlan[]     @relation("CoachPlans")
+  workoutLogs       WorkoutLog[]
+  exerciseLibrary   ExerciseLibrary[]  @relation("CoachLibrary")
+  coachPayments     Payment[]          @relation("CoachPayments")
+  sentMessages      Message[]          @relation("SentMessages")
+  receivedMessages  Message[]          @relation("ReceivedMessages")
+  workoutSkips      WorkoutSkip[]
+  hydrationLogs     HydrationLog[]
+  calorieLogs       CalorieLog[]
+  movements         Movement[]
+  personalRecords   PersonalRecord[]
+  notifications     Notification[]
+  workoutSessions   WorkoutSession[]
+  subscriptionPlans SubscriptionPlan[] @relation("CoachSubscriptionPlans")
+  coachContract     CoachContract?     @relation("CoachContract")
 
   @@map("users")
 }
@@ -78,24 +107,28 @@ model Student {
   coach         User           @relation("CoachStudents", fields: [coachId], references: [id])
   trainingPlans TrainingPlan[]
   payments      Payment[]
+  subscription  Subscription?
 
   @@map("students")
 }
 
 model TrainingPlan {
-  id        String   @id @default(uuid())
-  studentId String
+  id        String           @id @default(uuid())
+  // Opcional desde a v2: plano SHARED (Core/LPO) pertence ao coach + categoria, não a um aluno.
+  studentId String?
   coachId   String
+  category  TrainingCategory @default(PERFORMANCE)
+  scope     PlanScope        @default(INDIVIDUAL)
   month     Int
   startDate DateTime
   title     String
-  published Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  published Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 
   // Relations
-  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  coach   User    @relation("CoachPlans", fields: [coachId], references: [id])
+  student Student? @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  coach   User     @relation("CoachPlans", fields: [coachId], references: [id])
   weeks   Week[]
 
   @@map("training_plans")
@@ -140,9 +173,9 @@ model Session {
   updatedAt DateTime    @updatedAt
 
   // Relations
-  day          TrainingDay   @relation(fields: [dayId], references: [id], onDelete: Cascade)
-  exercises    Exercise[]
-  workoutSkips WorkoutSkip[]
+  day             TrainingDay      @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  exercises       Exercise[]
+  workoutSkips    WorkoutSkip[]
   workoutSessions WorkoutSession[]
 
   @@map("sessions")
@@ -225,15 +258,15 @@ model Message {
 }
 
 model WorkoutLog {
-  id            String   @id @default(uuid())
-  exerciseId    String
-  athleteId     String
-  completedAt   DateTime @default(now())
-  setsCompleted Int
+  id              String   @id @default(uuid())
+  exerciseId      String
+  athleteId       String
+  completedAt     DateTime @default(now())
+  setsCompleted   Int
   durationSeconds Int?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Relations
   exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
@@ -359,4 +392,80 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+// ── v2: assinaturas ─────────────────────────────────────────────────────────────
+
+/// Plano de assinatura de um coach (Combo/Core/LPO/Free são só o padrão inicial — coach e admin editam).
+model SubscriptionPlan {
+  id          String             @id @default(uuid())
+  coachId     String
+  name        String
+  description String?
+  /// 0 = gratuito. Centavos pra não usar float com dinheiro.
+  priceCents  Int                @default(0)
+  /// O que o plano libera. Combo = as 3; Core = [CORE]; LPO = [LPO]; Free = o que o coach/admin configurarem.
+  categories  TrainingCategory[]
+  isFree      Boolean            @default(false)
+  /// O que o Free libera além das categorias (sessões-amostra, vídeos de dúvida, histórico, chat...). Formato livre por ora.
+  freeConfig  Json?
+  active      Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  coach         User           @relation("CoachSubscriptionPlans", fields: [coachId], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+
+  @@index([coachId])
+  @@map("subscription_plans")
+}
+
+/// Assinatura de um aluno (uma por aluno; trocar de plano = atualizar o plano).
+model Subscription {
+  id                    String             @id @default(uuid())
+  studentId             String             @unique
+  planId                String
+  status                SubscriptionStatus @default(ACTIVE)
+  startedAt             DateTime           @default(now())
+  renewsAt              DateTime?
+  canceledAt            DateTime?
+  trialEndsAt           DateTime?
+  /// Preenchidos só na Rodada 4 (gateway de cobrança).
+  gateway               PaymentGateway?
+  gatewaySubscriptionId String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  student Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+/// Contrato do coach com a plataforma — SÓ o admin edita. Nunca exposto ao atleta.
+model CoachContract {
+  id                 String          @id @default(uuid())
+  coachId            String          @unique
+  /// Porcentagem da plataforma sobre cada cobrança, definida por contrato (ex.: 20.00).
+  platformFeePercent Decimal         @default(0) @db.Decimal(5, 2)
+  gateway            PaymentGateway?
+  /// Referência da conta do coach no gateway (Asaas: walletId; MP: id do usuário). Segredo/token NUNCA aqui em claro.
+  gatewayAccountRef  String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  coach User @relation("CoachContract", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@map("coach_contracts")
+}
+
+/// Configurações globais da plataforma (linha única, id = 'singleton'). Editável só pelo admin.
+model PlatformSettings {
+  id                        String   @id @default("singleton")
+  /// Quando false, o acesso NÃO é limitado pela assinatura (comportamento pré-v2). Liga-se na Rodada 3.
+  enforceSubscriptionAccess Boolean  @default(false)
+  updatedAt                 DateTime @updatedAt
+
+  @@map("platform_settings")
 }
