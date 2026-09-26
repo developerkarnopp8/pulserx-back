@@ -4,7 +4,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels:
       - "dependencias"
     # Majors do TypeScript e do Prisma exigem migração dedicada (Prisma 5→7 mexe em
@@ -18,11 +18,15 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
-    # Um PR só pra todos os minor/patch — todos mexem no package-lock.json, então PRs
-    # separados ficam em conflito entre si assim que o primeiro é mergeado.
+      # Os tipos acompanham o Node do runtime (24) — não pular pra 26.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    # UM PR só pra todas as atualizações (minor, patch e major) — todos mexem no
+    # package-lock.json, então PRs separados ficam em conflito entre si assim que o
+    # primeiro é mergeado.
     groups:
-      minor-e-patch:
-        update-types: ["minor", "patch"]
+      dependencias:
+        patterns: ["*"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
