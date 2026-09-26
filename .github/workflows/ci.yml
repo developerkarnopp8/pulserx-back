@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: ["main"]
+
+jobs:
+  lint-test-build:
+    name: Lint, testes e build
+    runs-on: ubuntu-latest
+    env:
+      # prisma generate só precisa da env var presente (schema.prisma lê via env()),
+      # não conecta de verdade — os testes usam PrismaService mockado, sem banco real.
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/pulserx"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run lint
+      - run: npm test -- --coverage
+      - run: npm run build
+
+  seguranca-dependencias:
+    name: Segurança — dependências (SCA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      # audit-level=critical (não "high"): hoje há 4 vulnerabilidades Altas reais em
+      # produção (multer/qs/js-yaml/lodash, puxadas por @nestjs/platform-express,
+      # @nestjs/swagger, @nestjs/config — DoS e prototype pollution, não RCE) que só
+      # fecham de verdade com NestJS 10→12 (major, breaking change, fora do escopo
+      # deste PR). Decisão do dono (2026-09-26): não travar o CI nisso agora, travar
+      # em "critical" e reapertar pra "high" quando o upgrade do NestJS acontecer —
+      # ver CLAUDE.md.
+      - run: npm audit --omit=dev --audit-level=critical
+
+  codeql:
+    name: Segurança — CodeQL (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
