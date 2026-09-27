@@ -5,6 +5,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AnthropicExtractionService } from './anthropic-extraction.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
+const Anthropic = require('@anthropic-ai/sdk').default;
+
+function creditExhaustedError(message: string) {
+  return new Anthropic.BadRequestError(
+    400,
+    { type: 'error', error: { type: 'invalid_request_error', message } },
+    message,
+    new Headers(),
+  );
+}
+
 describe('PdfImportService', () => {
   let service: PdfImportService;
   let prisma: any;
@@ -121,14 +133,7 @@ describe('PdfImportService', () => {
   });
 
   it('notifica todos os admins quando o erro é de crédito esgotado da Anthropic', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } },
-      'Your credit balance is too low to access the Anthropic API.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low to access the Anthropic API.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockResolvedValue([{ id: 'admin-1' }, { id: 'admin-2' }]);
 
@@ -145,14 +150,7 @@ describe('PdfImportService', () => {
   });
 
   it('não duplica notificação de crédito esgotado se já existe uma não-lida pro mesmo admin', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
-      'Your credit balance is too low.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockResolvedValue([{ id: 'admin-1' }]);
     prisma.notification.findFirst.mockResolvedValue({ id: 'ja-existe' });
@@ -163,13 +161,7 @@ describe('PdfImportService', () => {
   });
 
   it('mesmo se a notificação de crédito esgotado falhar, ainda lança 503 (não deixa o erro escapar)', async () => {
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
-      'Your credit balance is too low.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockRejectedValue(new Error('db fora do ar'));
 
@@ -206,13 +198,7 @@ describe('PdfImportService', () => {
   });
 
   it('falha ao notificar admins que não é instância de Error: loga a string, ainda vira 503', async () => {
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
-      'Your credit balance is too low.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockRejectedValue('sem stack');
 
