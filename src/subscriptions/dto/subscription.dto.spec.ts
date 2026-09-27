@@ -54,6 +54,11 @@ describe('UpdateSubscriptionPlanDto', () => {
     expect(await check(UpdateSubscriptionPlanDto, { active: false })).toHaveLength(0);
     expect(await props(UpdateSubscriptionPlanDto, { priceCents: -5, coachId: 'x' })).toEqual(['coachId', 'priceCents']);
   });
+
+  it('aceita freeConfig válido e rejeita freeConfig com propriedade desconhecida', async () => {
+    expect(await check(UpdateSubscriptionPlanDto, { freeConfig: { sampleSessionsPerCategory: 1, chat: false } })).toHaveLength(0);
+    expect((await check(UpdateSubscriptionPlanDto, { freeConfig: { script: '<script>alert(1)</script>' } })).length).toBeGreaterThan(0);
+  });
 });
 
 describe('AssignSubscriptionDto', () => {

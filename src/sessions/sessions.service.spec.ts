@@ -84,3 +84,18 @@ describe('SessionsService.findById', () => {
     await expect(service.findById('sess-1', { id: 'athlete-1', role: 'athlete' })).rejects.toThrow(NotFoundException);
   });
 });
+
+describe('SessionsService.findByDay', () => {
+  it('lista as sessões do dia, ordenadas, com os exercícios ordenados', async () => {
+    const prisma: any = { session: { findMany: jest.fn().mockResolvedValue([{ id: 'sess-1' }]) } };
+    const planAccess = { resolveBySessionId: jest.fn() };
+    const service = new SessionsService(prisma, planAccess as never);
+
+    await expect(service.findByDay('day-1')).resolves.toEqual([{ id: 'sess-1' }]);
+    expect(prisma.session.findMany).toHaveBeenCalledWith({
+      where: { dayId: 'day-1' },
+      orderBy: { order: 'asc' },
+      include: { exercises: { orderBy: { order: 'asc' } } },
+    });
+  });
+});

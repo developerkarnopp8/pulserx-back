@@ -109,6 +109,44 @@ describe('WorkoutSkipsService.create', () => {
     expect(messagesService.send).not.toHaveBeenCalled();
   });
 
+  it('decision "Abandoned" vira "não vai fazer" na mensagem; com nota, inclui a nota', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+
+    await service.create({ exerciseId: 'ex-1', reason: 'Injury', decision: 'Abandoned', note: 'Dor no ombro' } as any, athlete);
+
+    expect(messagesService.send).toHaveBeenCalledWith(
+      'athlete-1', 'coach-1', expect.stringContaining('não vai fazer. Nota: Dor no ombro'), true,
+    );
+  });
+
+  it('motivo fora do mapa conhecido: usa o próprio valor cru na mensagem', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+
+    await service.create({ exerciseId: 'ex-1', reason: 'MotivoNovo', decision: 'Postponed' } as any, athlete);
+
+    expect(messagesService.send).toHaveBeenCalledWith('athlete-1', 'coach-1', expect.stringContaining('motivo: MotivoNovo'), true);
+  });
+
+  it('sem nota, a mensagem não tem o sufixo "Nota:"', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+
+    await service.create({ exerciseId: 'ex-1', reason: 'Injury', decision: 'Postponed' } as any, athlete);
+
+    expect(messagesService.send).toHaveBeenCalledWith('athlete-1', 'coach-1', expect.not.stringContaining('Nota:'), true);
+  });
+
   it('plano compartilhado: avisa o coach dono do plano e linka o aluno que pulou', async () => {
     prisma.exercise.findUnique.mockResolvedValue({
       id: 'ex-1', name: 'Plank',

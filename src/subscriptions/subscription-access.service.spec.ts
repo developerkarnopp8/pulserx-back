@@ -143,4 +143,9 @@ describe('SubscriptionAccessService.filterStudentsWithCategory', () => {
     ).resolves.toEqual(['a', 'e']);
     expect((prisma.subscription as any).findMany).toHaveBeenCalledTimes(1);
   });
+
+  it('sem informar "now": usa a data atual por padrão', async () => {
+    const { service } = makeService({ enforced: false });
+    await expect(service.filterStudentsWithCategory(['a'], 'CORE')).resolves.toEqual(['a']);
+  });
 });

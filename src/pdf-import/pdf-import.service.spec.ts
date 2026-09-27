@@ -161,4 +161,61 @@ describe('PdfImportService', () => {
 
     expect(notifications.create).not.toHaveBeenCalled();
   });
+
+  it('mesmo se a notificação de crédito esgotado falhar, ainda lança 503 (não deixa o erro escapar)', async () => {
+    const Anthropic = require('@anthropic-ai/sdk').default;
+    const creditError = new Anthropic.BadRequestError(
+      400,
+      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
+      'Your credit balance is too low.',
+      new Headers(),
+    );
+    extraction.extract.mockRejectedValue(creditError);
+    prisma.user.findMany = jest.fn().mockRejectedValue(new Error('db fora do ar'));
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
+  });
+
+  it('novo plano usa o próximo mês ordinal livre do aluno (não sempre 1)', async () => {
+    prisma.trainingPlan.findMany.mockResolvedValue([{ month: 1 }, { month: 3 }]);
+
+    await service.importFromPdf(coachId, dto, pdfBuffer);
+
+    const createCall = prisma.trainingPlan.create.mock.calls[0][0];
+    expect(createCall.data.month).toBe(4);
+  });
+
+  it('sessão sem order extraído: usa 0 como padrão', async () => {
+    extraction.extract.mockResolvedValue({
+      planTitle: 'X',
+      weeks: [{ weekNumber: 1, days: [{ dayOfWeek: 'Terça', dayIndex: 2, sessions: [
+        { name: 'Sessão', type: 'LPO', exercises: [{ name: 'Ex', order: 1 }] },
+      ] }] }],
+    });
+
+    await service.importFromPdf(coachId, dto, pdfBuffer);
+
+    const createCall = prisma.trainingPlan.create.mock.calls[0][0];
+    expect(createCall.data.weeks.create[0].days.create[0].sessions.create[0].order).toBe(0);
+  });
+
+  it('erro de extração que não é instância de Error: loga a string, ainda vira 503', async () => {
+    extraction.extract.mockRejectedValue('falha crua, sem stack');
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
+  });
+
+  it('falha ao notificar admins que não é instância de Error: loga a string, ainda vira 503', async () => {
+    const Anthropic = require('@anthropic-ai/sdk').default;
+    const creditError = new Anthropic.BadRequestError(
+      400,
+      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
+      'Your credit balance is too low.',
+      new Headers(),
+    );
+    extraction.extract.mockRejectedValue(creditError);
+    prisma.user.findMany = jest.fn().mockRejectedValue('sem stack');
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
+  });
 });

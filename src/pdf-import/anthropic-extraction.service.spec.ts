@@ -74,4 +74,12 @@ describe('AnthropicExtractionService', () => {
 
     await expect(service.extract(Buffer.from('fake-pdf-bytes'))).rejects.toThrow('network error');
   });
+
+  it('sem ANTHROPIC_API_KEY configurado: lança erro explícito ao instanciar', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+
+    expect(() => new AnthropicExtractionService()).toThrow(/ANTHROPIC_API_KEY não configurado/);
+
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+  });
 });
