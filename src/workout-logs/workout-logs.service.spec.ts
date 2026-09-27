@@ -121,6 +121,13 @@ describe('WorkoutLogsService.logExercise', () => {
     );
   });
 
+  it('usa a data informada no dto (completedAt), não a data atual', async () => {
+    await service.logExercise(athleteUser, { ...dto, completedAt: '2026-01-05T10:00:00.000Z' } as any);
+    expect(prisma.workoutLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ completedAt: new Date('2026-01-05T10:00:00.000Z') }) }),
+    );
+  });
+
   it('grava durationSeconds como null quando ausente', async () => {
     await service.logExercise(athleteUser, dto as any);
 
@@ -129,5 +136,51 @@ describe('WorkoutLogsService.logExercise', () => {
         data: expect.objectContaining({ durationSeconds: null }),
       }),
     );
+  });
+});
+
+describe('WorkoutLogsService.getHistory / getSessionLogs / getExerciseHistory', () => {
+  let service: WorkoutLogsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = { workoutLog: { findMany: jest.fn().mockResolvedValue([]) } };
+    const module = await Test.createTestingModule({
+      providers: [
+        WorkoutLogsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StudentsService, useValue: { findOne: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByExerciseId: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(WorkoutLogsService);
+  });
+
+  it('getHistory filtra por athleteId e ordena por completedAt desc, com limit', async () => {
+    await service.getHistory('athlete-1', 20);
+    expect(prisma.workoutLog.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { athleteId: 'athlete-1' }, orderBy: { completedAt: 'desc' }, take: 20,
+    }));
+  });
+
+  it('getHistory sem limit usa o default de 50', async () => {
+    await service.getHistory('athlete-1');
+    expect(prisma.workoutLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50 }));
+  });
+
+  it('getSessionLogs filtra pelo athleteId e pelo exercise.sessionId', async () => {
+    await service.getSessionLogs('session-1', 'athlete-1');
+    expect(prisma.workoutLog.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { athleteId: 'athlete-1', exercise: { sessionId: 'session-1' } },
+    }));
+  });
+
+  it('getExerciseHistory filtra por exerciseId + athleteId, últimos 10', async () => {
+    await service.getExerciseHistory('ex-1', 'athlete-1');
+    expect(prisma.workoutLog.findMany).toHaveBeenCalledWith({
+      where: { exerciseId: 'ex-1', athleteId: 'athlete-1' },
+      orderBy: { completedAt: 'desc' },
+      take: 10,
+    });
   });
 });

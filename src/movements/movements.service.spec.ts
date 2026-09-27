@@ -104,3 +104,16 @@ describe('MovementsService.create', () => {
     });
   });
 });
+
+describe('MovementsService.findAvailable — atleta sem perfil de aluno vinculado', () => {
+  it('sem student encontrado: coachId cai pra null (só globais)', async () => {
+    const prisma: any = { movement: { findMany: jest.fn().mockResolvedValue([]) }, student: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const service = new MovementsService(prisma);
+
+    await service.findAvailable({ id: 'athlete-sem-coach', role: 'athlete' });
+
+    expect(prisma.movement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { OR: [{ coachId: null }, { coachId: null }] } }),
+    );
+  });
+});

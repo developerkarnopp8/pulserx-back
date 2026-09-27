@@ -5,6 +5,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AnthropicExtractionService } from './anthropic-extraction.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
+const Anthropic = require('@anthropic-ai/sdk').default;
+
+function creditExhaustedError(message: string) {
+  return new Anthropic.BadRequestError(
+    400,
+    { type: 'error', error: { type: 'invalid_request_error', message } },
+    message,
+    new Headers(),
+  );
+}
+
 describe('PdfImportService', () => {
   let service: PdfImportService;
   let prisma: any;
@@ -121,14 +133,7 @@ describe('PdfImportService', () => {
   });
 
   it('notifica todos os admins quando o erro é de crédito esgotado da Anthropic', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } },
-      'Your credit balance is too low to access the Anthropic API.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low to access the Anthropic API.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockResolvedValue([{ id: 'admin-1' }, { id: 'admin-2' }]);
 
@@ -145,14 +150,7 @@ describe('PdfImportService', () => {
   });
 
   it('não duplica notificação de crédito esgotado se já existe uma não-lida pro mesmo admin', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- precisa do require pra pegar o mesmo construtor de erro usado no mock
-    const Anthropic = require('@anthropic-ai/sdk').default;
-    const creditError = new Anthropic.BadRequestError(
-      400,
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low.' } },
-      'Your credit balance is too low.',
-      new Headers(),
-    );
+    const creditError = creditExhaustedError('Your credit balance is too low.');
     extraction.extract.mockRejectedValue(creditError);
     prisma.user.findMany = jest.fn().mockResolvedValue([{ id: 'admin-1' }]);
     prisma.notification.findFirst.mockResolvedValue({ id: 'ja-existe' });
@@ -160,5 +158,50 @@ describe('PdfImportService', () => {
     await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
 
     expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('mesmo se a notificação de crédito esgotado falhar, ainda lança 503 (não deixa o erro escapar)', async () => {
+    const creditError = creditExhaustedError('Your credit balance is too low.');
+    extraction.extract.mockRejectedValue(creditError);
+    prisma.user.findMany = jest.fn().mockRejectedValue(new Error('db fora do ar'));
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
+  });
+
+  it('novo plano usa o próximo mês ordinal livre do aluno (não sempre 1)', async () => {
+    prisma.trainingPlan.findMany.mockResolvedValue([{ month: 1 }, { month: 3 }]);
+
+    await service.importFromPdf(coachId, dto, pdfBuffer);
+
+    const createCall = prisma.trainingPlan.create.mock.calls[0][0];
+    expect(createCall.data.month).toBe(4);
+  });
+
+  it('sessão sem order extraído: usa 0 como padrão', async () => {
+    extraction.extract.mockResolvedValue({
+      planTitle: 'X',
+      weeks: [{ weekNumber: 1, days: [{ dayOfWeek: 'Terça', dayIndex: 2, sessions: [
+        { name: 'Sessão', type: 'LPO', exercises: [{ name: 'Ex', order: 1 }] },
+      ] }] }],
+    });
+
+    await service.importFromPdf(coachId, dto, pdfBuffer);
+
+    const createCall = prisma.trainingPlan.create.mock.calls[0][0];
+    expect(createCall.data.weeks.create[0].days.create[0].sessions.create[0].order).toBe(0);
+  });
+
+  it('erro de extração que não é instância de Error: loga a string, ainda vira 503', async () => {
+    extraction.extract.mockRejectedValue('falha crua, sem stack');
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
+  });
+
+  it('falha ao notificar admins que não é instância de Error: loga a string, ainda vira 503', async () => {
+    const creditError = creditExhaustedError('Your credit balance is too low.');
+    extraction.extract.mockRejectedValue(creditError);
+    prisma.user.findMany = jest.fn().mockRejectedValue('sem stack');
+
+    await expect(service.importFromPdf(coachId, dto, pdfBuffer)).rejects.toThrow(ServiceUnavailableException);
   });
 });

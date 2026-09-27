@@ -20,3 +20,24 @@ describe('WorkoutSkipsController — guards e roles', () => {
     expect(roles).toEqual(['coach']);
   });
 });
+
+describe('WorkoutSkipsController — delegação', () => {
+  function build() {
+    const service = { create: jest.fn(), getPendingCountByStudent: jest.fn() };
+    const controller = new WorkoutSkipsController(service as never);
+    return { controller, service };
+  }
+
+  it('create repassa dto + req.user', () => {
+    const { controller, service } = build();
+    const dto = { exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed' };
+    controller.create(dto as never, { user: { id: 'athlete-1' } });
+    expect(service.create).toHaveBeenCalledWith(dto, { id: 'athlete-1' });
+  });
+
+  it('getPendingCount usa o id do coach do token', () => {
+    const { controller, service } = build();
+    controller.getPendingCount({ user: { id: 'coach-1' } });
+    expect(service.getPendingCountByStudent).toHaveBeenCalledWith('coach-1');
+  });
+});

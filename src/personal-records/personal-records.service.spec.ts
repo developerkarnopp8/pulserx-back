@@ -112,6 +112,57 @@ describe('PersonalRecordsService.create', () => {
       '/coach/plan-builder/student-1',
     );
   });
+
+  it('notifica so por repeticoes quando so o reps bate recorde (existente tem menos reps)', async () => {
+    prisma.personalRecord.findMany.mockResolvedValue([{ loadKg: null, reps: 8 }]);
+    prisma.personalRecord.create.mockResolvedValue({ id: 'pr4', movement: { name: 'Pull-up' } });
+    prisma.student.findFirst.mockResolvedValue({ id: 'student-1', coachId: 'coach-1' });
+
+    await service.create('athlete-1', { movementId: 'mov-2', reps: 15 } as any);
+
+    expect(notificationsService.create).toHaveBeenCalledWith(
+      'coach-1',
+      'new_pr',
+      'Novo recorde pessoal!',
+      expect.stringContaining('repetições'),
+      '/coach/plan-builder/student-1',
+    );
+  });
+
+  it('nao notifica reps quando o existente ja tem reps maior ou igual', async () => {
+    prisma.personalRecord.findMany.mockResolvedValue([{ loadKg: null, reps: 20 }]);
+    prisma.personalRecord.create.mockResolvedValue({ id: 'pr5', movement: { name: 'Pull-up' } });
+
+    await service.create('athlete-1', { movementId: 'mov-2', reps: 15 } as any);
+
+    expect(notificationsService.create).not.toHaveBeenCalled();
+  });
+
+  it('notifica por carga e repeticoes quando os dois batem recorde na mesma tentativa', async () => {
+    prisma.personalRecord.findMany.mockResolvedValue([{ loadKg: 50, reps: 5 }]);
+    prisma.personalRecord.create.mockResolvedValue({ id: 'pr6', movement: { name: 'Clean' } });
+    prisma.student.findFirst.mockResolvedValue({ id: 'student-1', coachId: 'coach-1' });
+
+    await service.create('athlete-1', { movementId: 'mov-3', loadKg: 80, reps: 10 } as any);
+
+    expect(notificationsService.create).toHaveBeenCalledWith(
+      'coach-1',
+      'new_pr',
+      'Novo recorde pessoal!',
+      expect.stringContaining('carga e repetições'),
+      '/coach/plan-builder/student-1',
+    );
+  });
+
+  it('bateu recorde mas o atleta nao tem perfil de aluno vinculado: nao notifica (sem erro)', async () => {
+    prisma.personalRecord.findMany.mockResolvedValue([]);
+    prisma.personalRecord.create.mockResolvedValue({ id: 'pr7', movement: { name: 'Back Squat' } });
+    prisma.student.findFirst.mockResolvedValue(null);
+
+    await service.create('athlete-1', { movementId: 'mov-1', loadKg: 100 } as any);
+
+    expect(notificationsService.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('PersonalRecordsService.getMyHistory', () => {

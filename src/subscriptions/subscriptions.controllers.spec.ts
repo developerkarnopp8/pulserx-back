@@ -3,7 +3,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { SubscriptionPlansController } from './subscription-plans.controller';
+import { SubscriptionPlansService } from './subscription-plans.service';
 import { SubscriptionsController } from './subscriptions.controller';
+import { SubscriptionsService } from './subscriptions.service';
 import { AdminController } from '../admin/admin.controller';
 
 const rolesOf = (cls: any, method?: string) =>
@@ -31,5 +33,79 @@ describe('Controllers da R3 — guards e papéis', () => {
       expect(typeof AdminController.prototype[m as keyof AdminController]).toBe('function');
       expect(rolesOf(AdminController, m)).toBeUndefined(); // herdam o papel do controller (admin)
     }
+  });
+});
+
+describe('SubscriptionsController — delegação', () => {
+  function build() {
+    const service = { getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn() };
+    const controller = new SubscriptionsController(service as unknown as SubscriptionsService);
+    return { controller, service };
+  }
+
+  it('getMine usa req.user (atleta)', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'athlete-1', role: 'athlete' } };
+    controller.getMine(req);
+    expect(service.getMine).toHaveBeenCalledWith(req.user);
+  });
+
+  it('getForStudent repassa studentId + req.user', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    controller.getForStudent('student-1', req);
+    expect(service.getForStudent).toHaveBeenCalledWith('student-1', req.user);
+  });
+
+  it('assign repassa studentId + req.user + dto', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    const dto = { planId: 'plan-1', status: 'ACTIVE' };
+    controller.assign('student-1', req, dto as never);
+    expect(service.assign).toHaveBeenCalledWith('student-1', req.user, dto);
+  });
+
+  it('remove repassa studentId + req.user', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'admin-1', role: 'admin' } };
+    controller.remove('student-1', req);
+    expect(service.remove).toHaveBeenCalledWith('student-1', req.user);
+  });
+});
+
+describe('SubscriptionPlansController — delegação', () => {
+  function build() {
+    const service = { list: jest.fn(), create: jest.fn(), update: jest.fn() };
+    const controller = new SubscriptionPlansController(service as unknown as SubscriptionPlansService);
+    return { controller, service };
+  }
+
+  it('list repassa req.user + coachId opcional', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    controller.list(req);
+    expect(service.list).toHaveBeenCalledWith(req.user, undefined);
+
+    controller.list({ user: { id: 'admin-1', role: 'admin' } }, 'coach-2');
+    expect(service.list).toHaveBeenCalledWith({ id: 'admin-1', role: 'admin' }, 'coach-2');
+  });
+
+  it('create repassa req.user + dto + coachId opcional', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    const dto = { name: 'Combo', priceCents: 9990 };
+    controller.create(req, dto as never);
+    expect(service.create).toHaveBeenCalledWith(req.user, dto, undefined);
+
+    controller.create({ user: { id: 'admin-1', role: 'admin' } }, dto as never, 'coach-2');
+    expect(service.create).toHaveBeenCalledWith({ id: 'admin-1', role: 'admin' }, dto, 'coach-2');
+  });
+
+  it('update repassa id + req.user + dto', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    const dto = { active: false };
+    controller.update('plan-1', req, dto as never);
+    expect(service.update).toHaveBeenCalledWith('plan-1', req.user, dto);
   });
 });

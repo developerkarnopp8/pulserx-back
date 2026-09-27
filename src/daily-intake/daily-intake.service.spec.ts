@@ -141,4 +141,15 @@ describe('DailyIntakeService.getHistoryForStudent', () => {
 
     expect(todayBucket).toEqual({ date: today, hydrationMl: 750, calories: 400 });
   });
+
+  it('ignora log fora da janela de dias (bucket não existe) sem quebrar', async () => {
+    const foraDaJanela = new Date();
+    foraDaJanela.setDate(foraDaJanela.getDate() - 100);
+    prisma.hydrationLog.findMany.mockResolvedValue([{ amountMl: 250, loggedAt: foraDaJanela }]);
+    prisma.calorieLog.findMany.mockResolvedValue([{ kcal: 400, loggedAt: foraDaJanela }]);
+
+    const result = await service.getHistoryForStudent('student-1', coachUser);
+
+    expect(result.every(r => r.hydrationMl === 0 && r.calories === 0)).toBe(true);
+  });
 });

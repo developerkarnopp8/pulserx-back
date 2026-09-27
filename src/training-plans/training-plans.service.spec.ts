@@ -284,6 +284,20 @@ describe('TrainingPlansService.getWeeklyCompletionByDayIndex', () => {
     expect(result.every(r => r.percent === 0)).toBe(true);
   });
 
+  it('ignora dia com dayIndex fora do mapa (7+), sem quebrar', async () => {
+    prisma.student.findMany.mockResolvedValue([
+      { id: 'student-1', userId: 'athlete-1', currentMonth: 1, currentWeek: 1 },
+    ]);
+    prisma.week.findFirst.mockResolvedValue({
+      days: [{ dayIndex: 9, sessions: [{ exercises: [{ workoutLogs: [] }] }] }],
+    });
+
+    const result = await service.getWeeklyCompletionByDayIndex('coach-1');
+
+    expect(result).toHaveLength(7);
+    expect(result.every(r => r.percent === 0)).toBe(true);
+  });
+
   it('retorna 0% em todos os dias quando o coach não tem alunos', async () => {
     prisma.student.findMany.mockResolvedValue([]);
 
@@ -384,6 +398,14 @@ describe('TrainingPlansService.create — checagem de dono do aluno', () => {
     }).compile();
 
     service = module.get(TrainingPlansService);
+  });
+
+  it('aluno inexistente → 404, sem criar nada', async () => {
+    prisma.student.findUnique.mockResolvedValue(null);
+    await expect(service.create('coach-1', {
+      studentId: 'x', month: 1, title: 'Mesociclo 1', startDate: '2026-03-09',
+    } as any)).rejects.toThrow('Aluno não encontrado');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('cria o plano quando o aluno pertence ao coach autenticado', async () => {
@@ -627,5 +649,137 @@ describe('TrainingPlansService.initializeWeeks — progresso exibido', () => {
     prisma.trainingPlan.findUnique.mockResolvedValueOnce({ coachId: 'coach-9' });
     await expect(service.initializeWeeks('plan-s', 'coach-1')).rejects.toThrow(ForbiddenException);
     expect(prisma.week.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('TrainingPlansService — CRUD de conteúdo (dono via assertCoachOwnsPlan)', () => {
+  let service: TrainingPlansService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = {
+      trainingPlan: { findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
+      week: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
+      trainingDay: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
+      session: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
+      exercise: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    };
+    const module = await Test.createTestingModule({
+      providers: [
+        TrainingPlansService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: NotificationsService, useValue: { create: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: SubscriptionAccessService, useValue: { getViewableCategories: jest.fn(), canAccessCategory: jest.fn(), filterStudentsWithCategory: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(TrainingPlansService);
+  });
+
+  it('update: coach dono atualiza; outro coach → 403 sem escrever', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.trainingPlan.update.mockResolvedValue({ id: 'plan-1', title: 'novo' });
+    await expect(service.update('plan-1', 'coach-1', { title: 'novo' })).resolves.toEqual({ id: 'plan-1', title: 'novo' });
+    expect(prisma.trainingPlan.update).toHaveBeenCalledWith({ where: { id: 'plan-1' }, data: { title: 'novo' } });
+
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+    await expect(service.update('plan-1', 'coach-1', { title: 'x' })).rejects.toThrow(ForbiddenException);
+  });
+
+  it('update: plano inexistente → 404', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValue(null);
+    await expect(service.update('x', 'coach-1', {})).rejects.toThrow(NotFoundException);
+  });
+
+  it('remove: coach dono apaga; outro coach → 403', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.trainingPlan.delete.mockResolvedValue({ id: 'plan-1' });
+    await expect(service.remove('plan-1', 'coach-1')).resolves.toEqual({ id: 'plan-1' });
+
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+    await expect(service.remove('plan-1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.trainingPlan.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('addWeek/removeWeek: dono ok; removeWeek com semana inexistente → 404 sem checar dono', async () => {
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.week.create.mockResolvedValue({ id: 'week-1' });
+    await expect(service.addWeek('plan-1', 'coach-1', { weekNumber: 2 } as never)).resolves.toEqual({ id: 'week-1' });
+    expect(prisma.week.create).toHaveBeenCalledWith({ data: { planId: 'plan-1', weekNumber: 2 } });
+
+    prisma.week.findUnique.mockResolvedValue({ planId: 'plan-1' });
+    prisma.week.delete.mockResolvedValue({ id: 'week-1' });
+    await expect(service.removeWeek('week-1', 'coach-1')).resolves.toEqual({ id: 'week-1' });
+
+    prisma.week.findUnique.mockResolvedValue(null);
+    await expect(service.removeWeek('week-x', 'coach-1')).rejects.toThrow('Semana não encontrada');
+  });
+
+  it('removeWeek: semana de plano de outro coach → 403', async () => {
+    prisma.week.findUnique.mockResolvedValue({ planId: 'plan-1' });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+    await expect(service.removeWeek('week-1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.week.delete).not.toHaveBeenCalled();
+  });
+
+  it('addDay/removeDay: resolve o plano via a semana; dia inexistente → 404', async () => {
+    prisma.week.findUnique.mockResolvedValue({ planId: 'plan-1' });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.trainingDay.create.mockResolvedValue({ id: 'day-1' });
+    await expect(service.addDay('week-1', 'coach-1', { dayOfWeek: 'Terça', dayIndex: 2 } as never)).resolves.toEqual({ id: 'day-1' });
+    expect(prisma.trainingDay.create).toHaveBeenCalledWith({ data: { weekId: 'week-1', dayOfWeek: 'Terça', dayIndex: 2 } });
+
+    prisma.trainingDay.findUnique.mockResolvedValue({ week: { planId: 'plan-1' } });
+    prisma.trainingDay.delete.mockResolvedValue({ id: 'day-1' });
+    await expect(service.removeDay('day-1', 'coach-1')).resolves.toEqual({ id: 'day-1' });
+
+    prisma.trainingDay.findUnique.mockResolvedValue(null);
+    await expect(service.removeDay('day-x', 'coach-1')).rejects.toThrow('Dia não encontrado');
+  });
+
+  it('addSession/removeSession: resolve o plano via o dia; sessão inexistente → 404', async () => {
+    prisma.trainingDay.findUnique.mockResolvedValue({ week: { planId: 'plan-1' } });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.session.create.mockResolvedValue({ id: 'session-1' });
+    await expect(service.addSession('day-1', 'coach-1', { name: 'x', type: 'Strength' } as never)).resolves.toEqual({ id: 'session-1' });
+    expect(prisma.session.create).toHaveBeenCalledWith({
+      data: { dayId: 'day-1', name: 'x', type: 'Strength' },
+      include: { exercises: { orderBy: { order: 'asc' } } },
+    });
+
+    prisma.session.findUnique.mockResolvedValue({ day: { week: { planId: 'plan-1' } } });
+    prisma.session.delete.mockResolvedValue({ id: 'session-1' });
+    await expect(service.removeSession('session-1', 'coach-1')).resolves.toEqual({ id: 'session-1' });
+
+    prisma.session.findUnique.mockResolvedValue(null);
+    await expect(service.removeSession('session-x', 'coach-1')).rejects.toThrow('Sessão não encontrada');
+  });
+
+  it('addExercise/updateExercise/removeExercise: resolve o plano via a sessão/exercício; inexistente → 404', async () => {
+    prisma.session.findUnique.mockResolvedValue({ day: { week: { planId: 'plan-1' } } });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.exercise.create.mockResolvedValue({ id: 'ex-1' });
+    await expect(service.addExercise('session-1', 'coach-1', { name: 'Squat' } as never)).resolves.toEqual({ id: 'ex-1' });
+
+    prisma.exercise.findUnique.mockResolvedValue({ session: { day: { week: { planId: 'plan-1' } } } });
+    prisma.exercise.update.mockResolvedValue({ id: 'ex-1', name: 'Back Squat' });
+    await expect(service.updateExercise('ex-1', 'coach-1', { name: 'Back Squat' } as never)).resolves.toEqual({ id: 'ex-1', name: 'Back Squat' });
+    expect(prisma.exercise.update).toHaveBeenCalledWith({ where: { id: 'ex-1' }, data: { name: 'Back Squat' } });
+
+    prisma.exercise.delete.mockResolvedValue({ id: 'ex-1' });
+    await expect(service.removeExercise('ex-1', 'coach-1')).resolves.toEqual({ id: 'ex-1' });
+
+    prisma.exercise.findUnique.mockResolvedValue(null);
+    await expect(service.updateExercise('ex-x', 'coach-1', {} as never)).rejects.toThrow('Exercício não encontrado');
+    await expect(service.removeExercise('ex-x', 'coach-1')).rejects.toThrow('Exercício não encontrado');
+  });
+
+  it('exercício de plano de outro coach → 403 em update e remove (IDOR)', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({ session: { day: { week: { planId: 'plan-1' } } } });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+    await expect(service.updateExercise('ex-1', 'coach-1', {} as never)).rejects.toThrow(ForbiddenException);
+    await expect(service.removeExercise('ex-1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.exercise.update).not.toHaveBeenCalled();
+    expect(prisma.exercise.delete).not.toHaveBeenCalled();
   });
 });

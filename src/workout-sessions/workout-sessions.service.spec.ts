@@ -108,6 +108,16 @@ describe('WorkoutSessionsService.checkout', () => {
     await expect(service.checkout(athleteUser, dto)).rejects.toThrow(BadRequestException);
   });
 
+  it('log sem durationSeconds (null) soma 0 no activeSeconds', async () => {
+    prisma.workoutLog.findMany.mockResolvedValue([
+      { exerciseId: 'ex-1', durationSeconds: null }, { exerciseId: 'ex-2', durationSeconds: 90 },
+    ]);
+    await service.checkout(athleteUser, dto);
+    expect(prisma.workoutSession.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ activeSeconds: 90 }) }),
+    );
+  });
+
   it('só conta os logs a partir do startedAt desta execução (janela)', async () => {
     await service.checkout(athleteUser, dto);
     expect(prisma.workoutLog.findMany).toHaveBeenCalledWith(
@@ -266,6 +276,33 @@ describe('WorkoutSessionsService.studentSummary', () => {
       count: 0, avgElapsedSeconds: 0,
       trend: { direction: 'new', deltaSeconds: 0 }, perExercise: [],
     });
+  });
+
+  it('trend "equal" quando a média das últimas 3 é igual à das 3 anteriores', async () => {
+    prisma.workoutSession.findMany.mockResolvedValue([
+      { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() },
+      { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() },
+    ]);
+    const result = await service.studentSummary('student-1', coachUser);
+    expect(result.trend).toEqual({ direction: 'equal', deltaSeconds: 0 });
+  });
+
+  it('trend "slower" quando as últimas 3 demoraram mais que as 3 anteriores', async () => {
+    prisma.workoutSession.findMany.mockResolvedValue([
+      { elapsedSeconds: 4000, startedAt: new Date() }, { elapsedSeconds: 4000, startedAt: new Date() }, { elapsedSeconds: 4000, startedAt: new Date() },
+      { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() }, { elapsedSeconds: 3000, startedAt: new Date() },
+    ]);
+    const result = await service.studentSummary('student-1', coachUser);
+    expect(result.trend).toEqual({ direction: 'slower', deltaSeconds: 1000 });
+  });
+
+  it('perExercise com empate de amostras desempata por ordem alfabética do nome', async () => {
+    prisma.workoutLog.findMany.mockResolvedValue([
+      { durationSeconds: 60, exercise: { name: 'Snatch' } },
+      { durationSeconds: 40, exercise: { name: 'Back Squat' } },
+    ]);
+    const result = await service.studentSummary('student-1', coachUser);
+    expect(result.perExercise.map((e: any) => e.exerciseName)).toEqual(['Back Squat', 'Snatch']);
   });
 });
 
