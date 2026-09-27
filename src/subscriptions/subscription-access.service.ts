@@ -3,9 +3,9 @@ import { SubscriptionStatus, TrainingCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Status que dão acesso ao conteúdo. PAST_DUE e CANCELED NÃO dão acesso por enquanto —
- * carência de inadimplência e "cancelou mas pagou até o fim do período" são regras de
- * negócio ainda não decididas (Rodada 3/4); até lá, o mais conservador.
+ * Status que dão acesso ao conteúdo. PAST_DUE e CANCELED NUNCA dão acesso — decisão do dono
+ * (2026-09-27): sem carência de inadimplência nem "acesso até o fim do período pago" por
+ * enquanto (revisitar quando existir cobrança recorrente real, com `renewsAt` confiável — R4).
  */
 export const GRANTING_STATUSES: SubscriptionStatus[] = [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING];
 
