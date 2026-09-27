@@ -87,6 +87,8 @@ model User {
   workoutSessions   WorkoutSession[]
   subscriptionPlans SubscriptionPlan[] @relation("CoachSubscriptionPlans")
   coachContract     CoachContract?     @relation("CoachContract")
+  coachProfile      CoachProfile?      @relation("CoachProfile")
+  coachLeads        Lead[]             @relation("CoachLeads")
 
   @@map("users")
 }
@@ -468,4 +470,41 @@ model PlatformSettings {
   updatedAt                 DateTime @updatedAt
 
   @@map("platform_settings")
+}
+
+// ── Landing page pública do coach ────────────────────────────────────────────
+
+/// Perfil público do coach (1:1) — banner, bio, slug da URL. Só existe/aparece
+/// depois que o coach configura e publica; visitante nunca cria conta aqui.
+model CoachProfile {
+  id        String   @id @default(uuid())
+  coachId   String   @unique
+  /// URL da página pública (/c/:slug) — único, formato validado no DTO (kebab-case).
+  slug      String   @unique
+  bio       String?
+  bannerUrl String?
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  coach User @relation("CoachProfile", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@map("coach_profiles")
+}
+
+/// Contato enviado pelo formulário da landing page — vira notificação (+ e-mail) pro coach.
+/// Não cria conta nem assinatura: é só um lead, o coach decide o que fazer por fora.
+model Lead {
+  id        String   @id @default(uuid())
+  coachId   String
+  name      String
+  email     String
+  phone     String?
+  message   String?
+  createdAt DateTime @default(now())
+
+  coach User @relation("CoachLeads", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([coachId])
+  @@map("leads")
 }

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { SubscriptionPlansService } from './subscription-plans.service';
 import { PlanAccessService } from './plan-access.service';
@@ -9,6 +10,7 @@ import { SubscriptionPlansController } from './subscription-plans.controller';
 import { SubscriptionsController } from './subscriptions.controller';
 
 @Module({
+  imports: [NotificationsModule],
   controllers: [SubscriptionPlansController, SubscriptionsController],
   providers: [
     SubscriptionAccessService,

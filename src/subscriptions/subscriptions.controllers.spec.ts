@@ -20,8 +20,9 @@ describe('Controllers da R3 — guards e papéis', () => {
     expect(rolesOf(SubscriptionPlansController)).toEqual(['coach', 'admin']);
   });
 
-  it('assinaturas: aluno só lê a própria; atribuir/ler/remover de um aluno é coach/admin', () => {
+  it('assinaturas: aluno só lê/cancela a própria; atribuir/ler/remover de um aluno é coach/admin', () => {
     expect(rolesOf(SubscriptionsController, 'getMine')).toEqual(['athlete']);
+    expect(rolesOf(SubscriptionsController, 'cancelMine')).toEqual(['athlete']);
     for (const m of ['getForStudent', 'assign', 'remove']) {
       expect(rolesOf(SubscriptionsController, m)).toEqual(['coach', 'admin']);
     }
@@ -38,7 +39,7 @@ describe('Controllers da R3 — guards e papéis', () => {
 
 describe('SubscriptionsController — delegação', () => {
   function build() {
-    const service = { getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn() };
+    const service = { getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn(), cancelMine: jest.fn() };
     const controller = new SubscriptionsController(service as unknown as SubscriptionsService);
     return { controller, service };
   }
@@ -48,6 +49,13 @@ describe('SubscriptionsController — delegação', () => {
     const req = { user: { id: 'athlete-1', role: 'athlete' } };
     controller.getMine(req);
     expect(service.getMine).toHaveBeenCalledWith(req.user);
+  });
+
+  it('cancelMine usa req.user (atleta)', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'athlete-1', role: 'athlete' } };
+    controller.cancelMine(req);
+    expect(service.cancelMine).toHaveBeenCalledWith(req.user);
   });
 
   it('getForStudent repassa studentId + req.user', () => {

@@ -5,11 +5,13 @@ const admin = { id: 'admin-1', role: 'admin' };
 const FUTURE = new Date(Date.now() + 7 * 86_400_000).toISOString();
 const PAST = new Date(Date.now() - 86_400_000).toISOString();
 
-function build(over: { student?: any; plan?: any; current?: any } = {}) {
+function build(over: { student?: any; plan?: any; current?: any; myStudent?: any } = {}) {
   const prisma = {
     student: {
       findUnique: jest.fn().mockResolvedValue('student' in over ? over.student : { id: 's1', coachId: 'coach-1' }),
-      findFirst: jest.fn().mockResolvedValue({ id: 's1' }),
+      findFirst: jest.fn().mockResolvedValue(
+        'myStudent' in over ? over.myStudent : { id: 's1', coachId: 'coach-1', user: { name: 'Ana' } },
+      ),
     },
     subscriptionPlan: {
       findUnique: jest.fn().mockResolvedValue('plan' in over ? over.plan : { id: 'p1', coachId: 'coach-1', active: true }),
@@ -17,11 +19,13 @@ function build(over: { student?: any; plan?: any; current?: any } = {}) {
     subscription: {
       findUnique: jest.fn().mockResolvedValue('current' in over ? over.current : null),
       upsert: jest.fn().mockImplementation(async ({ create }) => ({ id: 'sub1', ...create })),
+      update: jest.fn().mockImplementation(async ({ data }) => ({ id: 'sub1', studentId: 's1', ...data })),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   };
   const access = { getViewableCategories: jest.fn().mockResolvedValue(['CORE']) };
-  return { service: new SubscriptionsService(prisma as any, access as any), prisma, access };
+  const notifications = { create: jest.fn() };
+  return { service: new SubscriptionsService(prisma as any, access as any, notifications as any), prisma, access, notifications };
 }
 
 describe('SubscriptionsService.assign', () => {
@@ -142,5 +146,52 @@ describe('SubscriptionsService.getMine', () => {
     const { service, prisma } = build();
     prisma.student.findFirst.mockResolvedValue(null);
     await expect(service.getMine({ id: 'u9', role: 'athlete' })).rejects.toThrow('Perfil de aluno não encontrado');
+  });
+});
+
+describe('SubscriptionsService.cancelMine', () => {
+  const athlete = { id: 'u1', role: 'athlete' };
+
+  it('cancela a própria assinatura e notifica o coach dono do aluno', async () => {
+    const { service, prisma, notifications } = build({ current: { id: 'sub1', status: 'ACTIVE' } });
+
+    const result = await service.cancelMine(athlete);
+
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { studentId: 's1' },
+      data: expect.objectContaining({ status: 'CANCELED', canceledAt: expect.any(Date) }),
+    }));
+    expect(result).toEqual(expect.objectContaining({ status: 'CANCELED' }));
+    expect(notifications.create).toHaveBeenCalledWith(
+      'coach-1', 'subscription_canceled', 'Assinatura cancelada',
+      expect.stringContaining('Ana'), '/coach/students',
+    );
+  });
+
+  it('sem perfil de aluno vinculado ao usuário → 404, sem tocar em nada', async () => {
+    const { service, prisma, notifications } = build();
+    prisma.student.findFirst.mockResolvedValue(null);
+
+    await expect(service.cancelMine(athlete)).rejects.toThrow('Perfil de aluno não encontrado');
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('sem assinatura nenhuma → 404, sem notificar', async () => {
+    const { service, prisma, notifications } = build({ current: null });
+
+    await expect(service.cancelMine(athlete)).rejects.toThrow('Você não tem uma assinatura ativa.');
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('já cancelada: idempotente, devolve como está sem notificar de novo', async () => {
+    const { service, prisma, notifications } = build({ current: { id: 'sub1', status: 'CANCELED' } });
+
+    const result = await service.cancelMine(athlete);
+
+    expect(result).toEqual({ id: 'sub1', status: 'CANCELED' });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(notifications.create).not.toHaveBeenCalled();
   });
 });

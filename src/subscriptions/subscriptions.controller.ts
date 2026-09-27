@@ -20,6 +20,13 @@ export class SubscriptionsController {
     return this.service.getMine(req.user);
   }
 
+  @Roles('athlete')
+  @Delete('subscriptions/me')
+  @ApiOperation({ summary: 'Cancela a própria assinatura (mantém histórico, notifica o coach)' })
+  cancelMine(@Request() req: any) {
+    return this.service.cancelMine(req.user);
+  }
+
   @Roles('coach', 'admin')
   @Get('students/:studentId/subscription')
   @ApiOperation({ summary: 'Assinatura de um aluno (coach dono ou admin)' })
