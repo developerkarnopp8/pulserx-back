@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AssignSubscriptionDto } from './dto/subscription.dto';
 
 type AuthUser = { id: string; role: string };
@@ -26,6 +27,7 @@ export class SubscriptionsService {
   constructor(
     private prisma: PrismaService,
     private access: SubscriptionAccessService,
+    private notifications: NotificationsService,
   ) {}
 
   /** Coach dono do aluno, ou admin. O aluno consulta a própria assinatura por `getMine`. */
@@ -106,5 +108,37 @@ export class SubscriptionsService {
     await this.assertCanManageStudent(studentId, user);
     const { count } = await this.prisma.subscription.deleteMany({ where: { studentId } });
     return { removed: count > 0 };
+  }
+
+  /** O próprio aluno cancela a própria assinatura (fica CANCELED, não some — mantém histórico) e o coach é notificado. */
+  async cancelMine(user: AuthUser) {
+    const student = await this.prisma.student.findFirst({
+      where: { userId: user.id },
+      select: { id: true, coachId: true, user: { select: { name: true } } },
+    });
+    if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
+
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { studentId: student.id },
+      select: SUBSCRIPTION_VIEW,
+    });
+    if (!subscription) throw new NotFoundException('Você não tem uma assinatura ativa.');
+    if (subscription.status === SubscriptionStatus.CANCELED) return subscription;
+
+    const updated = await this.prisma.subscription.update({
+      where: { studentId: student.id },
+      data: { status: SubscriptionStatus.CANCELED, canceledAt: new Date() },
+      select: SUBSCRIPTION_VIEW,
+    });
+
+    await this.notifications.create(
+      student.coachId,
+      'subscription_canceled',
+      'Assinatura cancelada',
+      `${student.user.name} cancelou a própria assinatura.`,
+      `/coach/students`,
+    );
+
+    return updated;
   }
 }

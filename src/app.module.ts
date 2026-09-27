@@ -22,6 +22,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PdfImportModule } from './pdf-import/pdf-import.module';
 import { AdminModule } from './admin/admin.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { CoachProfileModule } from './coach-profile/coach-profile.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
     PdfImportModule,
     AdminModule,
     SubscriptionsModule,
+    CoachProfileModule,
   ],
   providers: [
     {
