@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CoachProfileService } from './coach-profile.service';
 
 function build() {
@@ -6,6 +6,8 @@ function build() {
     coachProfile: { findUnique: jest.fn(), upsert: jest.fn(), update: jest.fn() },
     subscriptionPlan: { findMany: jest.fn() },
     lead: { create: jest.fn() },
+    testimonial: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    faqItem: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   };
   const cloudinary = { uploadImage: jest.fn() };
   const notifications = { create: jest.fn() };
@@ -24,17 +26,24 @@ describe('CoachProfileService.getMine', () => {
 });
 
 describe('CoachProfileService.upsert', () => {
-  it('cria o perfil quando o slug está livre', async () => {
+  const fullDto = {
+    slug: 'luan', bio: 'Treinador', headline: 'Headline', subheadline: 'Sub', quote: 'Quote',
+    achievementBadge: 'Semifinals', yearsExperience: 12, athletesCount: 1400, npsScore: 92,
+    completionRate: 88.4, whatsappNumber: '11999999999', videoUrl: 'https://youtu.be/abc',
+  };
+
+  it('cria o perfil quando o slug está livre, com todos os campos', async () => {
     const { service, prisma } = build();
     prisma.coachProfile.findUnique.mockResolvedValue(null);
-    prisma.coachProfile.upsert.mockResolvedValue({ id: 'p1', coachId: 'coach-1', slug: 'luan' });
+    prisma.coachProfile.upsert.mockResolvedValue({ id: 'p1', coachId: 'coach-1', ...fullDto });
 
-    await service.upsert('coach-1', { slug: 'luan', bio: 'Treinador' });
+    await service.upsert('coach-1', fullDto as never);
 
+    const { slug, ...rest } = fullDto;
     expect(prisma.coachProfile.upsert).toHaveBeenCalledWith({
       where: { coachId: 'coach-1' },
-      create: { coachId: 'coach-1', slug: 'luan', bio: 'Treinador' },
-      update: { slug: 'luan', bio: 'Treinador' },
+      create: { coachId: 'coach-1', slug, ...rest },
+      update: { slug, ...rest },
     });
   });
 
@@ -43,14 +52,14 @@ describe('CoachProfileService.upsert', () => {
     prisma.coachProfile.findUnique.mockResolvedValue({ coachId: 'coach-1' });
     prisma.coachProfile.upsert.mockResolvedValue({ id: 'p1' });
 
-    await expect(service.upsert('coach-1', { slug: 'luan' })).resolves.toBeDefined();
+    await expect(service.upsert('coach-1', { slug: 'luan' } as never)).resolves.toBeDefined();
   });
 
   it('slug já usado por OUTRO coach: 409, sem tentar upsert', async () => {
     const { service, prisma } = build();
     prisma.coachProfile.findUnique.mockResolvedValue({ coachId: 'coach-9' });
 
-    await expect(service.upsert('coach-1', { slug: 'luan' })).rejects.toThrow(ConflictException);
+    await expect(service.upsert('coach-1', { slug: 'luan' } as never)).rejects.toThrow(ConflictException);
     expect(prisma.coachProfile.upsert).not.toHaveBeenCalled();
   });
 });
@@ -74,8 +83,8 @@ describe('CoachProfileService.setPublished', () => {
   });
 });
 
-describe('CoachProfileService.uploadBanner', () => {
-  it('sem perfil configurado: 400, não sobe nada pro Cloudinary', async () => {
+describe('CoachProfileService.uploadBanner / uploadPhoto', () => {
+  it('uploadBanner sem perfil configurado: 400, não sobe nada', async () => {
     const { service, prisma, cloudinary } = build();
     prisma.coachProfile.findUnique.mockResolvedValue(null);
 
@@ -83,19 +92,158 @@ describe('CoachProfileService.uploadBanner', () => {
     expect(cloudinary.uploadImage).not.toHaveBeenCalled();
   });
 
-  it('com perfil: sobe a imagem na pasta do coach e salva a url', async () => {
+  it('uploadBanner com perfil: sobe na pasta certa e salva bannerUrl', async () => {
     const { service, prisma, cloudinary } = build();
     prisma.coachProfile.findUnique.mockResolvedValue({ id: 'p1' });
-    cloudinary.uploadImage.mockResolvedValue({ url: 'https://res.cloudinary.com/banner.jpg' });
-    prisma.coachProfile.update.mockResolvedValue({ id: 'p1', bannerUrl: 'https://res.cloudinary.com/banner.jpg' });
+    cloudinary.uploadImage.mockResolvedValue({ url: 'https://x/banner.jpg' });
+    prisma.coachProfile.update.mockResolvedValue({ id: 'p1', bannerUrl: 'https://x/banner.jpg' });
 
     const result = await service.uploadBanner('coach-1', Buffer.from('img'));
 
     expect(cloudinary.uploadImage).toHaveBeenCalledWith(Buffer.from('img'), 'pulserx/coach-banners/coach-1');
-    expect(prisma.coachProfile.update).toHaveBeenCalledWith({
-      where: { coachId: 'coach-1' }, data: { bannerUrl: 'https://res.cloudinary.com/banner.jpg' },
+    expect(prisma.coachProfile.update).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, data: { bannerUrl: 'https://x/banner.jpg' } });
+    expect(result.bannerUrl).toBe('https://x/banner.jpg');
+  });
+
+  it('uploadPhoto sem perfil configurado: 400, não sobe nada', async () => {
+    const { service, prisma, cloudinary } = build();
+    prisma.coachProfile.findUnique.mockResolvedValue(null);
+
+    await expect(service.uploadPhoto('coach-1', Buffer.from('img'))).rejects.toThrow(BadRequestException);
+    expect(cloudinary.uploadImage).not.toHaveBeenCalled();
+  });
+
+  it('uploadPhoto com perfil: sobe na pasta certa e salva photoUrl', async () => {
+    const { service, prisma, cloudinary } = build();
+    prisma.coachProfile.findUnique.mockResolvedValue({ id: 'p1' });
+    cloudinary.uploadImage.mockResolvedValue({ url: 'https://x/photo.jpg' });
+    prisma.coachProfile.update.mockResolvedValue({ id: 'p1', photoUrl: 'https://x/photo.jpg' });
+
+    const result = await service.uploadPhoto('coach-1', Buffer.from('img'));
+
+    expect(cloudinary.uploadImage).toHaveBeenCalledWith(Buffer.from('img'), 'pulserx/coach-photos/coach-1');
+    expect(prisma.coachProfile.update).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, data: { photoUrl: 'https://x/photo.jpg' } });
+    expect(result.photoUrl).toBe('https://x/photo.jpg');
+  });
+});
+
+describe('CoachProfileService — depoimentos', () => {
+  it('listTestimonials devolve os depoimentos do coach, ordenados', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findMany.mockResolvedValue([{ id: 't1' }]);
+
+    await expect(service.listTestimonials('coach-1')).resolves.toEqual([{ id: 't1' }]);
+    expect(prisma.testimonial.findMany).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, orderBy: { order: 'asc' } });
+  });
+
+  it('createTestimonial usa rating/order padrão quando ausentes', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.create.mockResolvedValue({ id: 't1' });
+
+    await service.createTestimonial('coach-1', { authorName: 'Ana', content: 'Ótimo!' } as never);
+
+    expect(prisma.testimonial.create).toHaveBeenCalledWith({
+      data: { coachId: 'coach-1', authorName: 'Ana', authorRole: undefined, rating: undefined, content: 'Ótimo!', order: 0 },
     });
-    expect(result.bannerUrl).toBe('https://res.cloudinary.com/banner.jpg');
+  });
+
+  it('updateTestimonial: dono edita', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.testimonial.update.mockResolvedValue({ id: 't1', authorName: 'Ana 2' });
+
+    await expect(service.updateTestimonial('t1', 'coach-1', { authorName: 'Ana 2', content: 'X' } as never))
+      .resolves.toEqual({ id: 't1', authorName: 'Ana 2' });
+  });
+
+  it('updateTestimonial: inexistente → 404', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findUnique.mockResolvedValue(null);
+
+    await expect(service.updateTestimonial('t1', 'coach-1', {} as never)).rejects.toThrow(NotFoundException);
+    expect(prisma.testimonial.update).not.toHaveBeenCalled();
+  });
+
+  it('updateTestimonial: de outro coach → 403, sem atualizar (IDOR)', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+
+    await expect(service.updateTestimonial('t1', 'coach-1', {} as never)).rejects.toThrow(ForbiddenException);
+    expect(prisma.testimonial.update).not.toHaveBeenCalled();
+  });
+
+  it('removeTestimonial: dono remove', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.testimonial.delete.mockResolvedValue({ id: 't1' });
+
+    await expect(service.removeTestimonial('t1', 'coach-1')).resolves.toEqual({ removed: true });
+  });
+
+  it('removeTestimonial: de outro coach → 403, sem apagar (IDOR)', async () => {
+    const { service, prisma } = build();
+    prisma.testimonial.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+
+    await expect(service.removeTestimonial('t1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.testimonial.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('CoachProfileService — FAQ', () => {
+  it('listFaqItems devolve as perguntas do coach, ordenadas', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findMany.mockResolvedValue([{ id: 'f1' }]);
+
+    await expect(service.listFaqItems('coach-1')).resolves.toEqual([{ id: 'f1' }]);
+    expect(prisma.faqItem.findMany).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, orderBy: { order: 'asc' } });
+  });
+
+  it('createFaqItem usa order padrão 0 quando ausente', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.create.mockResolvedValue({ id: 'f1' });
+
+    await service.createFaqItem('coach-1', { question: 'Q?', answer: 'A.' } as never);
+
+    expect(prisma.faqItem.create).toHaveBeenCalledWith({ data: { coachId: 'coach-1', question: 'Q?', answer: 'A.', order: 0 } });
+  });
+
+  it('updateFaqItem: dono edita', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.faqItem.update.mockResolvedValue({ id: 'f1' });
+
+    await expect(service.updateFaqItem('f1', 'coach-1', { question: 'Q2', answer: 'A2' } as never)).resolves.toEqual({ id: 'f1' });
+  });
+
+  it('updateFaqItem: inexistente → 404', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findUnique.mockResolvedValue(null);
+
+    await expect(service.updateFaqItem('f1', 'coach-1', {} as never)).rejects.toThrow(NotFoundException);
+  });
+
+  it('updateFaqItem: de outro coach → 403 (IDOR)', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+
+    await expect(service.updateFaqItem('f1', 'coach-1', {} as never)).rejects.toThrow(ForbiddenException);
+    expect(prisma.faqItem.update).not.toHaveBeenCalled();
+  });
+
+  it('removeFaqItem: dono remove', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findUnique.mockResolvedValue({ coachId: 'coach-1' });
+    prisma.faqItem.delete.mockResolvedValue({ id: 'f1' });
+
+    await expect(service.removeFaqItem('f1', 'coach-1')).resolves.toEqual({ removed: true });
+  });
+
+  it('removeFaqItem: de outro coach → 403, sem apagar (IDOR)', async () => {
+    const { service, prisma } = build();
+    prisma.faqItem.findUnique.mockResolvedValue({ coachId: 'coach-9' });
+
+    await expect(service.removeFaqItem('f1', 'coach-1')).rejects.toThrow(ForbiddenException);
+    expect(prisma.faqItem.delete).not.toHaveBeenCalled();
   });
 });
 
@@ -114,24 +262,38 @@ describe('CoachProfileService.getPublicBySlug', () => {
     await expect(service.getPublicBySlug('luan')).rejects.toThrow(NotFoundException);
   });
 
-  it('publicado: devolve nome/bio/banner + só os planos ativos do coach, sem campos sensíveis', async () => {
+  it('publicado: devolve todos os campos + planos ativos + depoimentos + faq, sem campos sensíveis', async () => {
     const { service, prisma } = build();
     prisma.coachProfile.findUnique.mockResolvedValue({
-      bio: 'Treinador', bannerUrl: 'https://x/banner.jpg', published: true,
+      bio: 'Treinador', bannerUrl: 'https://x/banner.jpg', photoUrl: 'https://x/photo.jpg',
+      headline: 'H', subheadline: 'S', quote: 'Q', achievementBadge: 'Semifinals',
+      yearsExperience: 12, athletesCount: 1400, npsScore: 92, completionRate: 88.4,
+      whatsappNumber: '11999999999', videoUrl: 'https://youtu.be/abc', published: true,
       coach: { id: 'coach-1', name: 'Luan' },
     });
     prisma.subscriptionPlan.findMany.mockResolvedValue([
       { id: 'plan1', name: 'Core', description: null, priceCents: 9900, categories: ['CORE'], isFree: false },
     ]);
+    prisma.testimonial.findMany.mockResolvedValue([
+      { id: 't1', coachId: 'coach-1', authorName: 'Ana', authorRole: 'Atleta', rating: 5, content: 'Ótimo!', order: 0, createdAt: new Date() },
+    ]);
+    prisma.faqItem.findMany.mockResolvedValue([
+      { id: 'f1', coachId: 'coach-1', question: 'Serve pra iniciante?', answer: 'Sim.', order: 0, createdAt: new Date() },
+    ]);
 
     const result = await service.getPublicBySlug('luan');
 
-    expect(prisma.subscriptionPlan.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { coachId: 'coach-1', active: true },
-    }));
+    expect(prisma.subscriptionPlan.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1', active: true } }));
+    expect(prisma.testimonial.findMany).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, orderBy: { order: 'asc' } });
+    expect(prisma.faqItem.findMany).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, orderBy: { order: 'asc' } });
     expect(result).toEqual({
-      coachName: 'Luan', bio: 'Treinador', bannerUrl: 'https://x/banner.jpg',
+      coachName: 'Luan', bio: 'Treinador', bannerUrl: 'https://x/banner.jpg', photoUrl: 'https://x/photo.jpg',
+      headline: 'H', subheadline: 'S', quote: 'Q', achievementBadge: 'Semifinals',
+      yearsExperience: 12, athletesCount: 1400, npsScore: 92, completionRate: 88.4,
+      whatsappNumber: '11999999999', videoUrl: 'https://youtu.be/abc',
       plans: [{ id: 'plan1', name: 'Core', description: null, priceCents: 9900, categories: ['CORE'], isFree: false }],
+      testimonials: [{ id: 't1', authorName: 'Ana', authorRole: 'Atleta', rating: 5, content: 'Ótimo!' }],
+      faqItems: [{ id: 'f1', question: 'Serve pra iniciante?', answer: 'Sim.' }],
     });
   });
 });

@@ -89,6 +89,8 @@ model User {
   coachContract     CoachContract?     @relation("CoachContract")
   coachProfile      CoachProfile?      @relation("CoachProfile")
   coachLeads        Lead[]             @relation("CoachLeads")
+  coachTestimonials Testimonial[]      @relation("CoachTestimonials")
+  coachFaqItems     FaqItem[]          @relation("CoachFaqItems")
 
   @@map("users")
 }
@@ -484,12 +486,63 @@ model CoachProfile {
   bio       String?
   bannerUrl String?
   published Boolean  @default(false)
+
+  /// Foto pessoal do coach (distinta do banner do hero) — seção "Sobre o coach".
+  photoUrl        String?
+  /// Frase de destaque do hero (ex.: "Treine com precisão tática..."). Null = usa o texto padrão do template.
+  headline        String?
+  /// Parágrafo de apoio abaixo do headline. Null = usa o texto padrão do template.
+  subheadline     String?
+  /// Citação em destaque do coach na seção "Sobre o coach".
+  quote           String?
+  /// Selo curto de credencial (ex.: "Semifinals CrossFit Games").
+  achievementBadge String?
+  yearsExperience  Int?
+  athletesCount    Int?
+  /// Métricas autodeclaradas pelo coach pra seção de depoimentos (0-100).
+  npsScore         Int?
+  completionRate   Float?
+  whatsappNumber   String?
+  /// Vídeo de demonstração (YouTube) — mesmo componente de embed já usado nos exercícios.
+  videoUrl         String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   coach User @relation("CoachProfile", fields: [coachId], references: [id], onDelete: Cascade)
 
   @@map("coach_profiles")
+}
+
+/// Depoimento de aluno, cadastrado manualmente pelo coach (não é um review verificado de um aluno real do sistema).
+model Testimonial {
+  id         String   @id @default(uuid())
+  coachId    String
+  authorName String
+  authorRole String?
+  rating     Int      @default(5)
+  content    String
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  coach User @relation("CoachTestimonials", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([coachId])
+  @@map("testimonials")
+}
+
+model FaqItem {
+  id        String   @id @default(uuid())
+  coachId   String
+  question  String
+  answer    String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  coach User @relation("CoachFaqItems", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([coachId])
+  @@map("faq_items")
 }
 
 /// Contato enviado pelo formulário da landing page — vira notificação (+ e-mail) pro coach.

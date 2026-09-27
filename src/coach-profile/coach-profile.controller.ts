@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, Patch, Post, Put, Request, UseGuards, UseInterceptors,
+  Body, Controller, Delete, Get, Param, Patch, Post, Put, Request, UseGuards, UseInterceptors,
   UploadedFile, ParseFilePipeBuilder, HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -8,9 +8,15 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CoachProfileService } from './coach-profile.service';
-import { UpdateCoachProfileDto, PublishCoachProfileDto } from './dto/coach-profile.dto';
+import { UpdateCoachProfileDto, PublishCoachProfileDto, UpsertTestimonialDto, UpsertFaqItemDto } from './dto/coach-profile.dto';
 
-const MAX_BANNER_SIZE_BYTES = 5 * 1024 * 1024; // 5MB — banner é imagem de tela, não precisa de mais
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB — banner/foto são imagens de tela, não precisa de mais
+
+const imageUploadInterceptor = FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: 1 } });
+const imageValidationPipe = new ParseFilePipeBuilder()
+  .addFileTypeValidator({ fileType: /^image\/(jpeg|png|webp)$/ })
+  .addMaxSizeValidator({ maxSize: MAX_IMAGE_SIZE_BYTES })
+  .build({ errorHttpStatusCode: HttpStatus.BAD_REQUEST });
 
 @ApiTags('coach-profile')
 @ApiBearerAuth()
@@ -27,7 +33,7 @@ export class CoachProfileController {
   }
 
   @Put()
-  @ApiOperation({ summary: 'Cria/edita o endereço (slug) e a bio da landing page' })
+  @ApiOperation({ summary: 'Cria/edita o endereço (slug), bio e conteúdo do hero da landing page' })
   upsert(@Request() req: any, @Body() dto: UpdateCoachProfileDto) {
     return this.service.upsert(req.user.id, dto);
   }
@@ -39,19 +45,70 @@ export class CoachProfileController {
   }
 
   @Post('banner')
-  @ApiOperation({ summary: 'Envia a foto de banner da landing page' })
+  @ApiOperation({ summary: 'Envia a foto de banner (hero) da landing page' })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BANNER_SIZE_BYTES, files: 1 } }))
-  uploadBanner(
-    @Request() req: any,
-    @UploadedFile(
-      new ParseFilePipeBuilder()
-        .addFileTypeValidator({ fileType: /^image\/(jpeg|png|webp)$/ })
-        .addMaxSizeValidator({ maxSize: MAX_BANNER_SIZE_BYTES })
-        .build({ errorHttpStatusCode: HttpStatus.BAD_REQUEST }),
-    )
-    file: Express.Multer.File,
-  ) {
+  @UseInterceptors(imageUploadInterceptor)
+  uploadBanner(@Request() req: any, @UploadedFile(imageValidationPipe) file: Express.Multer.File) {
     return this.service.uploadBanner(req.user.id, file.buffer);
+  }
+
+  @Post('photo')
+  @ApiOperation({ summary: 'Envia a foto pessoal do coach (seção "Sobre o coach")' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(imageUploadInterceptor)
+  uploadPhoto(@Request() req: any, @UploadedFile(imageValidationPipe) file: Express.Multer.File) {
+    return this.service.uploadPhoto(req.user.id, file.buffer);
+  }
+
+  // ── Depoimentos ──────────────────────────────────────────────────────────
+
+  @Get('testimonials')
+  @ApiOperation({ summary: 'Lista os depoimentos cadastrados' })
+  listTestimonials(@Request() req: any) {
+    return this.service.listTestimonials(req.user.id);
+  }
+
+  @Post('testimonials')
+  @ApiOperation({ summary: 'Cadastra um depoimento' })
+  createTestimonial(@Request() req: any, @Body() dto: UpsertTestimonialDto) {
+    return this.service.createTestimonial(req.user.id, dto);
+  }
+
+  @Patch('testimonials/:id')
+  @ApiOperation({ summary: 'Edita um depoimento' })
+  updateTestimonial(@Param('id') id: string, @Request() req: any, @Body() dto: UpsertTestimonialDto) {
+    return this.service.updateTestimonial(id, req.user.id, dto);
+  }
+
+  @Delete('testimonials/:id')
+  @ApiOperation({ summary: 'Remove um depoimento' })
+  removeTestimonial(@Param('id') id: string, @Request() req: any) {
+    return this.service.removeTestimonial(id, req.user.id);
+  }
+
+  // ── FAQ ──────────────────────────────────────────────────────────────────
+
+  @Get('faq')
+  @ApiOperation({ summary: 'Lista as perguntas frequentes cadastradas' })
+  listFaqItems(@Request() req: any) {
+    return this.service.listFaqItems(req.user.id);
+  }
+
+  @Post('faq')
+  @ApiOperation({ summary: 'Cadastra uma pergunta frequente' })
+  createFaqItem(@Request() req: any, @Body() dto: UpsertFaqItemDto) {
+    return this.service.createFaqItem(req.user.id, dto);
+  }
+
+  @Patch('faq/:id')
+  @ApiOperation({ summary: 'Edita uma pergunta frequente' })
+  updateFaqItem(@Param('id') id: string, @Request() req: any, @Body() dto: UpsertFaqItemDto) {
+    return this.service.updateFaqItem(id, req.user.id, dto);
+  }
+
+  @Delete('faq/:id')
+  @ApiOperation({ summary: 'Remove uma pergunta frequente' })
+  removeFaqItem(@Param('id') id: string, @Request() req: any) {
+    return this.service.removeFaqItem(id, req.user.id);
   }
 }
