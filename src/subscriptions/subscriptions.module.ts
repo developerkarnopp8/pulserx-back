@@ -8,6 +8,7 @@ import { CoachContractsService } from './coach-contracts.service';
 import { PlatformSettingsService } from './platform-settings.service';
 import { SubscriptionPlansController } from './subscription-plans.controller';
 import { SubscriptionsController } from './subscriptions.controller';
+import { AsaasService } from '../common/asaas.service';
 
 @Module({
   imports: [NotificationsModule],
@@ -19,6 +20,7 @@ import { SubscriptionsController } from './subscriptions.controller';
     SubscriptionsService,
     CoachContractsService,
     PlatformSettingsService,
+    AsaasService,
   ],
   exports: [
     SubscriptionAccessService,
@@ -27,6 +29,7 @@ import { SubscriptionsController } from './subscriptions.controller';
     SubscriptionsService,
     CoachContractsService,
     PlatformSettingsService,
+    AsaasService,
   ],
 })
 export class SubscriptionsModule {}

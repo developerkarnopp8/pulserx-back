@@ -43,4 +43,38 @@ describe('CoachContractsService', () => {
     const missing = build({ user: null });
     await expect(missing.service.setFee('x', 10)).rejects.toThrow('Coach não encontrado');
   });
+
+  describe('getWallet', () => {
+    it('sem contrato cadastrado: walletId null', async () => {
+      await expect(build().service.getWallet('coach-1')).resolves.toEqual({ walletId: null });
+    });
+
+    it('com contrato: devolve o walletId salvo', async () => {
+      const { service } = build({ contract: { gatewayAccountRef: 'wallet-1' } });
+      await expect(service.getWallet('coach-1')).resolves.toEqual({ walletId: 'wallet-1' });
+    });
+  });
+
+  describe('setWallet', () => {
+    it('cadastra o walletId (upsert) com gateway ASAAS, sem tocar no platformFeePercent', async () => {
+      const { service, prisma } = build();
+      await expect(service.setWallet('coach-1', 'wallet-1')).resolves.toEqual({ walletId: 'wallet-1' });
+      expect(prisma.coachContract.upsert).toHaveBeenCalledWith({
+        where: { coachId: 'coach-1' },
+        create: { coachId: 'coach-1', gatewayAccountRef: 'wallet-1', gateway: 'ASAAS' },
+        update: { gatewayAccountRef: 'wallet-1', gateway: 'ASAAS' },
+      });
+    });
+  });
+
+  describe('getContractForCharge', () => {
+    it('sem contrato: walletId null e platformFeePercent 0', async () => {
+      await expect(build().service.getContractForCharge('coach-1')).resolves.toEqual({ walletId: null, platformFeePercent: 0 });
+    });
+
+    it('com contrato: devolve walletId e a % como número', async () => {
+      const { service } = build({ contract: { gatewayAccountRef: 'wallet-1', platformFeePercent: '20.00' } });
+      await expect(service.getContractForCharge('coach-1')).resolves.toEqual({ walletId: 'wallet-1', platformFeePercent: 20 });
+    });
+  });
 });

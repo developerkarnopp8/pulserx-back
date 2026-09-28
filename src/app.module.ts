@@ -23,6 +23,7 @@ import { PdfImportModule } from './pdf-import/pdf-import.module';
 import { AdminModule } from './admin/admin.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { CoachProfileModule } from './coach-profile/coach-profile.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { CoachProfileModule } from './coach-profile/coach-profile.module';
     AdminModule,
     SubscriptionsModule,
     CoachProfileModule,
+    WebhooksModule,
   ],
   providers: [
     {

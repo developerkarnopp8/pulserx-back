@@ -1,9 +1,12 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { SubscriptionStatus } from '@prisma/client';
+import { PaymentGateway, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
+import { CoachContractsService } from './coach-contracts.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { AssignSubscriptionDto } from './dto/subscription.dto';
+import { AsaasService } from '../common/asaas.service';
+import { isValidCpf, onlyCpfDigits } from '../common/cpf';
+import { AssignSubscriptionDto, CheckoutSubscriptionDto } from './dto/subscription.dto';
 
 type AuthUser = { id: string; role: string };
 
@@ -28,6 +31,8 @@ export class SubscriptionsService {
     private prisma: PrismaService,
     private access: SubscriptionAccessService,
     private notifications: NotificationsService,
+    private coachContracts: CoachContractsService,
+    private asaas: AsaasService,
   ) {}
 
   /** Coach dono do aluno, ou admin. O aluno consulta a própria assinatura por `getMine`. */
@@ -120,10 +125,19 @@ export class SubscriptionsService {
 
     const subscription = await this.prisma.subscription.findUnique({
       where: { studentId: student.id },
-      select: SUBSCRIPTION_VIEW,
+      select: { ...SUBSCRIPTION_VIEW, gatewaySubscriptionId: true },
     });
     if (!subscription) throw new NotFoundException('Você não tem uma assinatura ativa.');
-    if (subscription.status === SubscriptionStatus.CANCELED) return subscription;
+    if (subscription.status === SubscriptionStatus.CANCELED) {
+      const { gatewaySubscriptionId: _omit, ...view } = subscription;
+      return view;
+    }
+
+    // Cancela no gateway ANTES de mudar o status local — se o Asaas rejeitar, a assinatura
+    // continua ACTIVE aqui (não fica "cancelada" pro aluno enquanto o gateway ainda cobra).
+    if (subscription.gatewaySubscriptionId) {
+      await this.asaas.cancelSubscription(subscription.gatewaySubscriptionId);
+    }
 
     const updated = await this.prisma.subscription.update({
       where: { studentId: student.id },
@@ -140,5 +154,118 @@ export class SubscriptionsService {
     );
 
     return updated;
+  }
+
+  /**
+   * O próprio aluno assina um plano do coach dele. Plano Free/gratuito é atribuído direto
+   * (sem gateway); plano pago exige o coach já ter cadastrado a carteira Asaas e cria a
+   * assinatura recorrente na Asaas com split automático pro coach.
+   *
+   * Lock de aconselhamento do Postgres por aluno (mesmo padrão de `ensureDefaultPlans`) serializa
+   * reexecuções (duplo clique, retry, duas abas): sem ele, duas chamadas concorrentes releriam o
+   * mesmo `gatewaySubscriptionId` antigo e criariam DUAS assinaturas no Asaas, e o upsert local
+   * (studentId único) sobrescreveria uma pela outra — a outra ficaria órfã cobrando pra sempre,
+   * sem aparecer em nenhuma tela nem ter como ser cancelada pelo app.
+   */
+  async checkout(user: AuthUser, dto: CheckoutSubscriptionDto) {
+    const student = await this.prisma.student.findFirst({
+      where: { userId: user.id },
+      select: { id: true, coachId: true, cpf: true, asaasCustomerId: true, user: { select: { name: true, email: true } } },
+    });
+    if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
+
+    const plan = await this.prisma.subscriptionPlan.findUnique({
+      where: { id: dto.planId },
+      select: { id: true, coachId: true, active: true, isFree: true, priceCents: true },
+    });
+    if (!plan || plan.coachId !== student.coachId || !plan.active) {
+      throw new NotFoundException('Plano não encontrado');
+    }
+
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${student.id}))`;
+
+      const current = await tx.subscription.findUnique({
+        where: { studentId: student.id },
+        select: { gatewaySubscriptionId: true },
+      });
+      // Cancela a assinatura anterior no Asaas ANTES de criar/trocar — nunca deixa uma cobrança
+      // recorrente órfã rodando por trás (troca de plano, retry, ou downgrade pro Free). Se o
+      // cancelamento falhar, o checkout inteiro falha (fail-closed) em vez de arriscar duplicar cobrança.
+      if (current?.gatewaySubscriptionId) {
+        await this.asaas.cancelSubscription(current.gatewaySubscriptionId);
+      }
+
+      if (plan.isFree || plan.priceCents === 0) {
+        const subscription = await tx.subscription.upsert({
+          where: { studentId: student.id },
+          create: { studentId: student.id, planId: plan.id, status: SubscriptionStatus.ACTIVE },
+          update: {
+            planId: plan.id, status: SubscriptionStatus.ACTIVE, canceledAt: null,
+            gateway: null, gatewaySubscriptionId: null,
+          },
+          select: SUBSCRIPTION_VIEW,
+        });
+        return { subscription, checkoutUrl: null };
+      }
+
+      const contract = await this.coachContracts.getContractForCharge(student.coachId);
+      if (!contract.walletId) {
+        throw new BadRequestException('Este treinador ainda não configurou o recebimento de pagamentos. Fale com ele antes de assinar.');
+      }
+
+      let cpfDigits = student.cpf;
+      if (!cpfDigits) {
+        if (!dto.cpf || !isValidCpf(dto.cpf)) {
+          throw new BadRequestException('Informe um CPF válido para assinar um plano pago.');
+        }
+        cpfDigits = onlyCpfDigits(dto.cpf);
+        await tx.student.update({ where: { id: student.id }, data: { cpf: cpfDigits } });
+      }
+
+      let asaasCustomerId = student.asaasCustomerId;
+      if (!asaasCustomerId) {
+        const customer = await this.asaas.createCustomer(student.user.name, student.user.email, cpfDigits);
+        asaasCustomerId = customer.id;
+        await tx.student.update({ where: { id: student.id }, data: { asaasCustomerId } });
+      }
+
+      const asaasSubscription = await this.asaas.createSubscription({
+        customerId: asaasCustomerId,
+        valueCents: plan.priceCents,
+        walletId: contract.walletId,
+        coachPercent: 100 - contract.platformFeePercent,
+        externalReference: student.id,
+      });
+
+      const subscription = await tx.subscription.upsert({
+        where: { studentId: student.id },
+        create: {
+          studentId: student.id, planId: plan.id, status: SubscriptionStatus.PAST_DUE,
+          gateway: PaymentGateway.ASAAS, gatewaySubscriptionId: asaasSubscription.id,
+        },
+        update: {
+          planId: plan.id, status: SubscriptionStatus.PAST_DUE, canceledAt: null,
+          gateway: PaymentGateway.ASAAS, gatewaySubscriptionId: asaasSubscription.id,
+        },
+        select: SUBSCRIPTION_VIEW,
+      });
+
+      const localSubscription = await tx.subscription.findUniqueOrThrow({ where: { studentId: student.id }, select: { id: true } });
+      const payments = await this.asaas.listPaymentsBySubscription(asaasSubscription.id);
+      const firstPayment = payments[0];
+      if (firstPayment) {
+        await tx.gatewayPayment.upsert({
+          where: { asaasPaymentId: firstPayment.id },
+          create: {
+            subscriptionId: localSubscription.id, asaasPaymentId: firstPayment.id,
+            amount: firstPayment.value, dueDate: new Date(firstPayment.dueDate), invoiceUrl: firstPayment.invoiceUrl,
+          },
+          update: { invoiceUrl: firstPayment.invoiceUrl },
+        });
+      }
+
+      return { subscription, checkoutUrl: firstPayment?.invoiceUrl ?? null };
+    }, { timeout: 15_000 });
   }
 }

@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PaymentGateway } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -30,5 +31,30 @@ export class CoachContractsService {
       update: { platformFeePercent },
     });
     return { coachId, platformFeePercent: Number(contract.platformFeePercent) };
+  }
+
+  /** O próprio coach lê a carteira que cadastrou (não o %, que é exclusivo do admin). */
+  async getWallet(coachId: string): Promise<{ walletId: string | null }> {
+    const contract = await this.prisma.coachContract.findUnique({ where: { coachId } });
+    return { walletId: contract?.gatewayAccountRef ?? null };
+  }
+
+  /** O próprio coach cadastra a carteira (walletId) do Asaas onde recebe o split — nunca o %. */
+  async setWallet(coachId: string, walletId: string): Promise<{ walletId: string }> {
+    const contract = await this.prisma.coachContract.upsert({
+      where: { coachId },
+      create: { coachId, gatewayAccountRef: walletId, gateway: PaymentGateway.ASAAS },
+      update: { gatewayAccountRef: walletId, gateway: PaymentGateway.ASAAS },
+    });
+    return { walletId: contract.gatewayAccountRef! };
+  }
+
+  /** Uso interno (checkout) — nunca exposto a controller sem checar antes se o coach tem carteira. */
+  async getContractForCharge(coachId: string): Promise<{ walletId: string | null; platformFeePercent: number }> {
+    const contract = await this.prisma.coachContract.findUnique({ where: { coachId } });
+    return {
+      walletId: contract?.gatewayAccountRef ?? null,
+      platformFeePercent: contract ? Number(contract.platformFeePercent) : 0,
+    };
   }
 }

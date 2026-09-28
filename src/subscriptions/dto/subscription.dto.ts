@@ -109,3 +109,19 @@ export class UpdatePlatformSettingsDto {
   @IsOptional() @IsBoolean()
   confirmLockout?: boolean;
 }
+
+export class CheckoutSubscriptionDto {
+  @ApiProperty({ description: 'Plano de assinatura que o aluno está escolhendo' })
+  @IsString()
+  planId: string;
+
+  @ApiPropertyOptional({ description: 'CPF do aluno (com ou sem máscara) — obrigatório só se ainda não tiver sido salvo antes' })
+  @IsOptional() @IsString() @MinLength(11) @MaxLength(14)
+  cpf?: string;
+}
+
+export class SetCoachWalletDto {
+  @ApiProperty({ description: 'walletId da conta Asaas do coach — onde ele recebe o split de cada cobrança' })
+  @IsString() @MinLength(10) @MaxLength(100)
+  walletId: string;
+}
