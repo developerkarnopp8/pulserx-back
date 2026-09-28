@@ -3,7 +3,6 @@ import {
   WebSocketServer,
   SubscribeMessage,
   OnGatewayConnection,
-  OnGatewayDisconnect,
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
@@ -19,12 +18,9 @@ import { JwtService } from '@nestjs/jwt';
   },
   namespace: '/messages',
 })
-export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class MessagesGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
-
-  /** userId → socketId */
-  private userSockets = new Map<string, string>();
 
   constructor(private jwt: JwtService) {}
 
@@ -35,32 +31,27 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
         (client.handshake.headers?.authorization as string)?.replace('Bearer ', '');
       const payload = this.jwt.verify<{ sub: string }>(token);
       client.data.userId = payload.sub;
-      this.userSockets.set(payload.sub, client.id);
+      // Uma sala por usuário: todas as abas/dispositivos dele recebem o evento. O socket.io tira
+      // o socket da sala sozinho ao desconectar — fechar uma aba não derruba as outras (antes,
+      // um Map userId→socketId guardava só o último e o apagava ao fechar qualquer aba).
+      client.join(MessagesGateway.userRoom(payload.sub));
     } catch {
       client.disconnect(true);
     }
   }
 
-  handleDisconnect(client: Socket): void {
-    if (client.data.userId) {
-      this.userSockets.delete(client.data.userId);
-    }
+  static userRoom(userId: string): string {
+    return `user:${userId}`;
   }
 
-  /** Emite a mensagem em tempo real para o destinatário */
+  /** Emite a mensagem em tempo real para o destinatário (sala vazia = ninguém conectado, no-op). */
   emitToUser(userId: string, message: object): void {
-    const socketId = this.userSockets.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('new_message', message);
-    }
+    this.server.to(MessagesGateway.userRoom(userId)).emit('new_message', message);
   }
 
   /** Emite uma notificação em tempo real para o destinatário — mesmo canal usado pras mensagens. */
   emitNotification(userId: string, notification: object): void {
-    const socketId = this.userSockets.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('new_notification', notification);
-    }
+    this.server.to(MessagesGateway.userRoom(userId)).emit('new_notification', notification);
   }
 
   @SubscribeMessage('ping')

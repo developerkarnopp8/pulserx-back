@@ -8,6 +8,7 @@ function buildClient(overrides: Partial<any> = {}) {
     data: {},
     disconnect: jest.fn(),
     emit: jest.fn(),
+    join: jest.fn(),
     ...overrides,
   } as any;
 }
@@ -23,7 +24,7 @@ function build() {
 }
 
 describe('MessagesGateway.handleConnection', () => {
-  it('token no handshake.auth: valida e guarda o socket do usuário', () => {
+  it('token no handshake.auth: valida e coloca o socket na sala do usuário', () => {
     const { gateway, jwt } = build();
     jwt.verify.mockReturnValue({ sub: 'user-1' });
     const client = buildClient({ handshake: { auth: { token: 'tok-1' }, headers: {} } });
@@ -32,6 +33,7 @@ describe('MessagesGateway.handleConnection', () => {
 
     expect(jwt.verify).toHaveBeenCalledWith('tok-1');
     expect(client.data.userId).toBe('user-1');
+    expect(client.join).toHaveBeenCalledWith('user:user-1');
     expect(client.disconnect).not.toHaveBeenCalled();
   });
 
@@ -43,75 +45,52 @@ describe('MessagesGateway.handleConnection', () => {
     gateway.handleConnection(client);
 
     expect(jwt.verify).toHaveBeenCalledWith('tok-2');
-    expect(client.data.userId).toBe('user-2');
+    expect(client.join).toHaveBeenCalledWith('user:user-2');
   });
 
-  it('token inválido: desconecta o socket, sem lançar', () => {
+  it('token inválido: desconecta o socket e não entra em sala nenhuma', () => {
     const { gateway, jwt } = build();
     jwt.verify.mockImplementation(() => { throw new Error('invalid'); });
     const client = buildClient();
 
     expect(() => gateway.handleConnection(client)).not.toThrow();
     expect(client.disconnect).toHaveBeenCalledWith(true);
+    expect(client.join).not.toHaveBeenCalled();
   });
-});
 
-describe('MessagesGateway.handleDisconnect', () => {
-  it('remove o socket do mapa quando o client tinha userId', () => {
+  it('várias abas do mesmo usuário entram na MESMA sala (nenhuma substitui a outra)', () => {
     const { gateway, jwt } = build();
     jwt.verify.mockReturnValue({ sub: 'user-1' });
-    const client = buildClient({ handshake: { auth: { token: 'tok-1' }, headers: {} } });
-    gateway.handleConnection(client);
+    const tab1 = buildClient({ id: 's1', handshake: { auth: { token: 'x' }, headers: {} } });
+    const tab2 = buildClient({ id: 's2', handshake: { auth: { token: 'x' }, headers: {} } });
 
-    gateway.handleDisconnect(client);
+    gateway.handleConnection(tab1);
+    gateway.handleConnection(tab2);
 
-    gateway.emitToUser('user-1', { text: 'oi' });
-    const { to } = gateway.server as any;
-    expect(to).not.toHaveBeenCalled();
-  });
-
-  it('client sem userId: não faz nada (sem erro)', () => {
-    const { gateway } = build();
-    const client = buildClient();
-    expect(() => gateway.handleDisconnect(client)).not.toThrow();
+    expect(tab1.join).toHaveBeenCalledWith('user:user-1');
+    expect(tab2.join).toHaveBeenCalledWith('user:user-1');
   });
 });
 
 describe('MessagesGateway.emitToUser', () => {
-  it('emite new_message pro socket do destinatário quando ele está conectado', () => {
-    const { gateway, jwt, to, emit } = build();
-    jwt.verify.mockReturnValue({ sub: 'user-1' });
-    gateway.handleConnection(buildClient({ id: 'socket-1', handshake: { auth: { token: 'x' }, headers: {} } }));
+  it('emite new_message só pra sala do destinatário', () => {
+    const { gateway, to, emit } = build();
 
     gateway.emitToUser('user-1', { text: 'oi' });
 
-    expect(to).toHaveBeenCalledWith('socket-1');
+    expect(to).toHaveBeenCalledWith('user:user-1');
     expect(emit).toHaveBeenCalledWith('new_message', { text: 'oi' });
-  });
-
-  it('destinatário não conectado: não emite nada', () => {
-    const { gateway, to } = build();
-    gateway.emitToUser('user-sem-socket', { text: 'oi' });
-    expect(to).not.toHaveBeenCalled();
   });
 });
 
 describe('MessagesGateway.emitNotification', () => {
-  it('emite new_notification pro socket do destinatário quando ele está conectado', () => {
-    const { gateway, jwt, to, emit } = build();
-    jwt.verify.mockReturnValue({ sub: 'user-1' });
-    gateway.handleConnection(buildClient({ id: 'socket-1', handshake: { auth: { token: 'x' }, headers: {} } }));
+  it('emite new_notification só pra sala do destinatário', () => {
+    const { gateway, to, emit } = build();
 
     gateway.emitNotification('user-1', { title: 'Novo recorde!' });
 
-    expect(to).toHaveBeenCalledWith('socket-1');
+    expect(to).toHaveBeenCalledWith('user:user-1');
     expect(emit).toHaveBeenCalledWith('new_notification', { title: 'Novo recorde!' });
-  });
-
-  it('destinatário não conectado: não emite nada', () => {
-    const { gateway, to } = build();
-    gateway.emitNotification('user-sem-socket', { title: 'x' });
-    expect(to).not.toHaveBeenCalled();
   });
 });
 
