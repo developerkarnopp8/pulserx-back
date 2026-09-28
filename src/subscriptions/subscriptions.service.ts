@@ -270,6 +270,76 @@ export class SubscriptionsService {
   }
 
   /**
+   * Resumo financeiro real do coach — MRR/receita por plano, inadimplência e churn/LTV
+   * projetado. Tudo calculado a partir de `Subscription` (status/startedAt/canceledAt) e
+   * `SubscriptionPlan.priceCents`, sem nenhum dado inventado — não existe billing history
+   * tabular (snapshot mês a mês), então churn e LTV são aproximações honestas explicadas
+   * nos comentários abaixo, não um cálculo contábil oficial.
+   */
+  async getFinancialSummary(coachId: string) {
+    const subscriptions = await this.prisma.subscription.findMany({
+      where: { student: { coachId } },
+      select: {
+        status: true,
+        startedAt: true,
+        canceledAt: true,
+        plan: { select: { id: true, name: true, priceCents: true } },
+      },
+    });
+
+    const active = subscriptions.filter(s => s.status === 'ACTIVE' || s.status === 'TRIALING');
+    const pastDue = subscriptions.filter(s => s.status === 'PAST_DUE');
+
+    // MRR e receita por plano: soma do preço de cada assinatura ativa/em teste, agrupada por plano.
+    const byPlan = new Map<string, { planId: string; planName: string; priceCents: number; activeCount: number; mrrCents: number }>();
+    for (const s of active) {
+      const entry = byPlan.get(s.plan.id) ?? { planId: s.plan.id, planName: s.plan.name, priceCents: s.plan.priceCents, activeCount: 0, mrrCents: 0 };
+      entry.activeCount++;
+      entry.mrrCents += s.plan.priceCents;
+      byPlan.set(s.plan.id, entry);
+    }
+    const revenueByPlan = Array.from(byPlan.values()).sort((a, b) => b.mrrCents - a.mrrCents);
+    const mrrCents = revenueByPlan.reduce((sum, p) => sum + p.mrrCents, 0);
+
+    // Inadimplência: % de quem tem assinatura e está PAST_DUE agora.
+    const pastDueRatePercent = subscriptions.length > 0 ? Math.round((pastDue.length / subscriptions.length) * 10_000) / 100 : 0;
+
+    // Churn mensal (aproximação): cancelados dentro do mês corrente ÷ quem já estava com
+    // assinatura antes do mês começar e ainda não tinha cancelado até lá. Sem uma tabela de
+    // snapshots mensais reais, essa é a melhor aproximação honesta com o dado disponível.
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const canceledThisMonth = subscriptions.filter(
+      s => s.canceledAt && s.canceledAt >= startOfMonth && s.canceledAt < startOfNextMonth,
+    ).length;
+    const activeAtStartOfMonth = subscriptions.filter(
+      s => s.startedAt < startOfMonth && (!s.canceledAt || s.canceledAt >= startOfMonth),
+    ).length;
+    const churnRatePercent = activeAtStartOfMonth > 0
+      ? Math.round((canceledThisMonth / activeAtStartOfMonth) * 10_000) / 100
+      : 0;
+
+    // LTV projetado = ticket médio mensal ÷ taxa de churn mensal (fórmula padrão de SaaS).
+    // Sem cancelamento nenhum no mês, a taxa de churn é 0 e a divisão não faz sentido — null
+    // em vez de "infinito" ou um número fictício.
+    const arpuCents = active.length > 0 ? Math.round(mrrCents / active.length) : 0;
+    const ltvProjectedCents = churnRatePercent > 0 ? Math.round(arpuCents / (churnRatePercent / 100)) : null;
+
+    return {
+      mrrCents,
+      revenueByPlan,
+      totalActive: active.length,
+      totalPastDue: pastDue.length,
+      pastDueRatePercent,
+      churn: { canceledThisMonth, activeAtStartOfMonth, ratePercent: churnRatePercent },
+      arpuCents,
+      ltvProjectedCents,
+    };
+  }
+
+  /**
    * Histórico real de cobranças do gateway (Asaas) dos alunos deste coach — pra tela de
    * governança/repasses. Nunca inclui gatewaySubscriptionId nem qualquer campo do CoachContract
    * (walletId/%), só o que já é seguro mostrar (o próprio coach vendo as cobranças dos alunos dele).

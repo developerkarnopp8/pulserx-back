@@ -24,6 +24,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     subscription: {
       findUnique: jest.fn().mockResolvedValue('current' in over ? over.current : null),
       findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'sub1' }),
+      findMany: jest.fn().mockResolvedValue([]),
       upsert: jest.fn().mockImplementation(async ({ create }) => ({ id: 'sub1', ...create })),
       update: jest.fn().mockImplementation(async ({ data }) => ({ id: 'sub1', studentId: 's1', ...data })),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -421,5 +422,121 @@ describe('SubscriptionsService.listGatewayPayments', () => {
     const { service, prisma } = build();
     prisma.gatewayPayment.findMany.mockResolvedValue(rows);
     await expect(service.listGatewayPayments('coach-1')).resolves.toBe(rows);
+  });
+});
+
+describe('SubscriptionsService.getFinancialSummary', () => {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const beforeThisMonth = new Date(startOfMonth.getTime() - 40 * 86_400_000); // ~40 dias antes do mês começar
+  const withinThisMonth = new Date(startOfMonth.getTime() + 5 * 86_400_000);  // dia 6 do mês corrente
+
+  const core = { id: 'core', name: 'Core', priceCents: 9900 };
+  const combo = { id: 'combo', name: 'Combo', priceCents: 19900 };
+
+  it('escopa a busca pelo coachId', async () => {
+    const { service, prisma } = build();
+    await service.getFinancialSummary('coach-1');
+    expect(prisma.subscription.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { student: { coachId: 'coach-1' } },
+    }));
+  });
+
+  it('MRR e receita por plano: soma só ACTIVE/TRIALING, agrupado e ordenado do maior pro menor', async () => {
+    const { service, prisma } = build();
+    prisma.subscription.findMany.mockResolvedValue([
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'TRIALING', startedAt: beforeThisMonth, canceledAt: null, plan: combo },
+      { status: 'CANCELED', startedAt: beforeThisMonth, canceledAt: beforeThisMonth, plan: combo }, // não conta
+      { status: 'PAST_DUE', startedAt: beforeThisMonth, canceledAt: null, plan: core }, // não conta no MRR
+    ]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result.mrrCents).toBe(9900 * 2 + 19900);
+    expect(result.revenueByPlan).toEqual([
+      { planId: 'combo', planName: 'Combo', priceCents: 19900, activeCount: 1, mrrCents: 19900 },
+      { planId: 'core', planName: 'Core', priceCents: 9900, activeCount: 2, mrrCents: 19800 },
+    ]);
+    expect(result.totalActive).toBe(3);
+  });
+
+  it('inadimplência: % de quem tem assinatura e está PAST_DUE agora', async () => {
+    const { service, prisma } = build();
+    prisma.subscription.findMany.mockResolvedValue([
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'PAST_DUE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'PAST_DUE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'PAST_DUE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+    ]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result.totalPastDue).toBe(3);
+    expect(result.pastDueRatePercent).toBe(75);
+  });
+
+  it('sem nenhuma assinatura: tudo zerado, nunca divide por zero', async () => {
+    const { service, prisma } = build();
+    prisma.subscription.findMany.mockResolvedValue([]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result).toEqual({
+      mrrCents: 0, revenueByPlan: [], totalActive: 0, totalPastDue: 0, pastDueRatePercent: 0,
+      churn: { canceledThisMonth: 0, activeAtStartOfMonth: 0, ratePercent: 0 },
+      arpuCents: 0, ltvProjectedCents: null,
+    });
+  });
+
+  it('churn mensal: cancelados dentro do mês ÷ quem já estava ativo antes do mês começar', async () => {
+    const { service, prisma } = build();
+    prisma.subscription.findMany.mockResolvedValue([
+      // 4 já existiam antes do mês começar (base do denominador)
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'CANCELED', startedAt: beforeThisMonth, canceledAt: withinThisMonth, plan: core }, // cancelou ESTE mês
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      // começou este mês — não entra no denominador (não existia "antes do mês")
+      { status: 'ACTIVE', startedAt: withinThisMonth, canceledAt: null, plan: core },
+      // cancelou ANTES deste mês começar — já não contava mais mesmo no início do mês
+      { status: 'CANCELED', startedAt: beforeThisMonth, canceledAt: beforeThisMonth, plan: core },
+    ]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result.churn).toEqual({ canceledThisMonth: 1, activeAtStartOfMonth: 4, ratePercent: 25 });
+  });
+
+  it('LTV projetado = ticket médio mensal ÷ taxa de churn (fração) — null quando não há churn no mês', async () => {
+    const { service, prisma } = build();
+    prisma.subscription.findMany.mockResolvedValue([
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+    ]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result.arpuCents).toBe(9900);
+    expect(result.churn.ratePercent).toBe(0);
+    expect(result.ltvProjectedCents).toBeNull();
+  });
+
+  it('LTV projetado: com churn real, calcula ticket médio ÷ taxa de churn', async () => {
+    const { service, prisma } = build();
+    // 4 ativos antes do mês, 1 cancelou este mês → churn 25%; ARPU = 9900 (só 1 plano)
+    prisma.subscription.findMany.mockResolvedValue([
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'ACTIVE', startedAt: beforeThisMonth, canceledAt: null, plan: core },
+      { status: 'CANCELED', startedAt: beforeThisMonth, canceledAt: withinThisMonth, plan: core },
+    ]);
+
+    const result = await service.getFinancialSummary('coach-1');
+
+    expect(result.churn.ratePercent).toBe(25);
+    expect(result.arpuCents).toBe(9900); // 3 ativos × 9900 / 3
+    expect(result.ltvProjectedCents).toBe(Math.round(9900 / 0.25));
   });
 });

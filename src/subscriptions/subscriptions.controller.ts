@@ -57,6 +57,13 @@ export class SubscriptionsController {
     return this.service.listGatewayPayments(req.user.id);
   }
 
+  @Roles('coach')
+  @Get('subscriptions/financial-summary')
+  @ApiOperation({ summary: 'MRR/receita por plano, inadimplência e churn/LTV projetado — tudo real, do próprio coach' })
+  getFinancialSummary(@Request() req: any) {
+    return this.service.getFinancialSummary(req.user.id);
+  }
+
   @Roles('athlete')
   @Delete('subscriptions/me')
   @ApiOperation({ summary: 'Cancela a própria assinatura (mantém histórico, notifica o coach)' })
