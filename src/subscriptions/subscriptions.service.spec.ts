@@ -539,3 +539,32 @@ describe('SubscriptionsService.getFinancialSummary', () => {
     expect(result.ltvProjectedCents).toBe(Math.round(9900 / 0.25));
   });
 });
+
+describe('SubscriptionsService.listMyPayments', () => {
+  const athlete = { id: 'u1', role: 'athlete' };
+
+  it('resolve o studentId pelo userId do token e busca só as cobranças dele', async () => {
+    const { service, prisma } = build();
+    await service.listMyPayments(athlete);
+
+    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1' }, select: { id: true } });
+    expect(prisma.gatewayPayment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subscription: { studentId: 's1' } },
+      orderBy: { createdAt: 'desc' },
+    }));
+  });
+
+  it('sem perfil de aluno vinculado ao usuário → 404', async () => {
+    const { service, prisma } = build();
+    prisma.student.findFirst.mockResolvedValue(null);
+    await expect(service.listMyPayments(athlete)).rejects.toThrow('Perfil de aluno não encontrado');
+  });
+
+  it('a seleção nunca inclui asaasPaymentId nem dado de outro aluno', async () => {
+    const { service, prisma } = build();
+    await service.listMyPayments(athlete);
+    const call = prisma.gatewayPayment.findMany.mock.calls[0][0];
+    expect(call.select).not.toHaveProperty('asaasPaymentId');
+    expect(call.select).not.toHaveProperty('subscription');
+  });
+});
