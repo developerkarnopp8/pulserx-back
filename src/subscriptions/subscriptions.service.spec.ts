@@ -358,7 +358,7 @@ describe('SubscriptionsService.checkout', () => {
   });
 
   it('já tem assinatura paga anterior: cancela no Asaas ANTES de criar a nova (troca de plano/retry não duplica cobrança)', async () => {
-    const { service, prisma, asaas } = build({ current: { gatewaySubscriptionId: 'sub_asaas_antiga' } });
+    const { service, asaas } = build({ current: { gatewaySubscriptionId: 'sub_asaas_antiga' } });
 
     await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
 
