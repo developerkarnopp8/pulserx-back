@@ -1,22 +1,15 @@
 import {
   Body, Controller, Delete, Get, Param, Patch, Post, Put, Request, UseGuards, UseInterceptors,
-  UploadedFile, ParseFilePipeBuilder, HttpStatus,
+  UploadedFile,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CoachProfileService } from './coach-profile.service';
+import { imageUploadInterceptor, imageValidationPipe } from '../common/image-upload';
 import { UpdateCoachProfileDto, PublishCoachProfileDto, UpsertTestimonialDto, UpsertFaqItemDto } from './dto/coach-profile.dto';
 
-const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB — banner/foto são imagens de tela, não precisa de mais
-
-const imageUploadInterceptor = FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: 1 } });
-const imageValidationPipe = new ParseFilePipeBuilder()
-  .addFileTypeValidator({ fileType: /^image\/(jpeg|png|webp)$/ })
-  .addMaxSizeValidator({ maxSize: MAX_IMAGE_SIZE_BYTES })
-  .build({ errorHttpStatusCode: HttpStatus.BAD_REQUEST });
 
 @ApiTags('coach-profile')
 @ApiBearerAuth()

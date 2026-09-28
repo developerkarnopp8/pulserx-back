@@ -1,17 +1,29 @@
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { ExerciseLibraryController } from './exercise-library.controller';
 import { ExerciseLibraryService } from './exercise-library.service';
 
 function build() {
-  const service = { findAll: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() };
+  const service = { findAll: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn(), uploadImage: jest.fn(), removeImage: jest.fn() };
   const controller = new ExerciseLibraryController(service as unknown as ExerciseLibraryService);
   return { controller, service };
 }
 
 describe('ExerciseLibraryController', () => {
-  it('exige JwtAuthGuard', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, ExerciseLibraryController)).toEqual(expect.arrayContaining([JwtAuthGuard]));
+  it('exige JwtAuthGuard + RolesGuard e só coach (atleta não alcança a biblioteca)', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, ExerciseLibraryController)).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
+    expect(Reflect.getMetadata(ROLES_KEY, ExerciseLibraryController)).toEqual(['coach']);
+  });
+
+  it('uploadImage/removeImage usam o id do coach do token', () => {
+    const { controller, service } = build();
+    const file = { buffer: Buffer.from('img') } as Express.Multer.File;
+    controller.uploadImage('item-1', { user: { id: 'coach-1' } }, file);
+    expect(service.uploadImage).toHaveBeenCalledWith('item-1', 'coach-1', file.buffer);
+    controller.removeImage('item-1', { user: { id: 'coach-1' } });
+    expect(service.removeImage).toHaveBeenCalledWith('item-1', 'coach-1');
   });
 
   it('findAll usa o id do coach do token', () => {
