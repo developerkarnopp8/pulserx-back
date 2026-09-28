@@ -130,3 +130,33 @@ describe('UpsertFaqItemDto', () => {
     expect((await check(UpsertFaqItemDto, { ...base, order: -1 })).some(e => e.property === 'order')).toBe(true);
   });
 });
+
+describe('UpdateCoachProfileDto — garantia, suporte e textos da página', () => {
+  const base = { slug: 'luan-treinador' };
+
+  it('aceita garantia, suporte e textos com até 4 cards', async () => {
+    expect(await check(UpdateCoachProfileDto, {
+      ...base, guaranteeDays: 30, guaranteeText: 'Devolvo 100%', supportEmail: 'suporte@example.com', supportHours: 'Seg a sex',
+      pageCopy: { howItWorksTitle: 'Como funciona', plansTitle: 'Planos', finalTitle: 'Bora', finalCtaLabel: 'Quero',
+        pillars: [{ title: 'Periodização', text: 'Fases de acúmulo e pico.' }] },
+    })).toHaveLength(0);
+  });
+
+  it('recusa garantia fora de 1–365 dias e e-mail de suporte inválido', async () => {
+    const props = async (b: object) => (await check(UpdateCoachProfileDto, { ...base, ...b })).map(e => e.property);
+    expect(await props({ guaranteeDays: 0 })).toContain('guaranteeDays');
+    expect(await props({ guaranteeDays: 400 })).toContain('guaranteeDays');
+    expect(await props({ supportEmail: 'nao-e-email' })).toContain('supportEmail');
+  });
+
+  it('recusa mais de 4 cards e card com título/texto inválido', async () => {
+    const card = { title: 'Título', text: 'Texto do card' };
+    const tooMany = await check(UpdateCoachProfileDto, { ...base, pageCopy: { pillars: [card, card, card, card, card] } });
+    expect(tooMany.map(e => e.property)).toContain('pageCopy');
+    const invalid = await check(UpdateCoachProfileDto, { ...base, pageCopy: { pillars: [{ title: 123, text: 'x'.repeat(201) }] } });
+    expect(invalid.map(e => e.property)).toContain('pageCopy');
+    // card vazio é permitido: mantém a posição e a página usa o texto padrão dela
+    expect(await check(UpdateCoachProfileDto, { ...base, pageCopy: { pillars: [{ title: '', text: '' }, card] } })).toHaveLength(0);
+  });
+});
+
