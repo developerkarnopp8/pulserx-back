@@ -82,6 +82,7 @@ model User {
   hydrationLogs     HydrationLog[]
   calorieLogs       CalorieLog[]
   movements         Movement[]
+  athleteMovements  Movement[]       @relation("AthleteMovements")
   personalRecords   PersonalRecord[]
   notifications     Notification[]
   workoutSessions   WorkoutSession[]
@@ -359,15 +360,22 @@ model CalorieLog {
   @@map("calorie_logs")
 }
 
+/// Catálogo de movimentos pra registrar PR. Três origens, nunca mais de uma:
+/// global (coachId e athleteId null — catálogo padrão, todo mundo vê), do coach (coachId —
+/// o coach e os alunos dele veem) ou do atleta (athleteId — só ele vê).
 model Movement {
   id        String   @id @default(uuid())
   name      String
   category  String
   coachId   String?
+  athleteId String?
   createdAt DateTime @default(now())
 
   coach           User?            @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  athlete         User?            @relation("AthleteMovements", fields: [athleteId], references: [id], onDelete: Cascade)
   personalRecords PersonalRecord[]
+
+  @@index([athleteId])
 
   @@map("movements")
 }
