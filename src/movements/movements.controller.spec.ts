@@ -16,8 +16,8 @@ describe('MovementsController', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, MovementsController)).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
   });
 
-  it('create exige @Roles(coach); findAvailable não tem @Roles próprio', () => {
-    expect(Reflect.getMetadata(ROLES_KEY, MovementsController.prototype.create)).toEqual(['coach']);
+  it('create aceita coach e atleta; findAvailable não tem @Roles próprio', () => {
+    expect(Reflect.getMetadata(ROLES_KEY, MovementsController.prototype.create)).toEqual(['coach', 'athlete']);
     expect(Reflect.getMetadata(ROLES_KEY, MovementsController.prototype.findAvailable)).toBeUndefined();
   });
 
@@ -28,10 +28,11 @@ describe('MovementsController', () => {
     expect(service.findAvailable).toHaveBeenCalledWith(user);
   });
 
-  it('create usa o coachId do token', () => {
+  it('create repassa o usuário do token (nunca id vindo do body)', () => {
     const { controller, service } = build();
     const dto = { name: 'Zercher Squat', category: 'Força' };
-    controller.create(dto as never, { user: { id: 'coach-1' } });
-    expect(service.create).toHaveBeenCalledWith('coach-1', dto);
+    const user = { id: 'athlete-1', role: 'athlete' };
+    controller.create(dto as never, { user });
+    expect(service.create).toHaveBeenCalledWith(user, dto);
   });
 });

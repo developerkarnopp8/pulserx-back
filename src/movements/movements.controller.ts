@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Request, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -19,10 +20,12 @@ export class MovementsController {
     return this.service.findAvailable(req.user);
   }
 
-  @Roles('coach')
+  // Limite próprio: é escrita aberta a todo atleta (não só coach) — evita encher o catálogo.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Roles('coach', 'athlete')
   @Post()
-  @ApiOperation({ summary: 'Cadastra movimento customizado, visível só pros próprios alunos' })
+  @ApiOperation({ summary: 'Cadastra movimento: do coach (alunos veem) ou do atleta (só ele vê)' })
   create(@Body() dto: CreateMovementDto, @Request() req: any) {
-    return this.service.create(req.user.id, dto);
+    return this.service.create(req.user, dto);
   }
 }
