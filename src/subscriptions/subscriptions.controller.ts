@@ -71,6 +71,13 @@ export class SubscriptionsController {
     return this.service.getFinancialSummary(req.user.id);
   }
 
+  @Roles('coach')
+  @Get('subscriptions/monthly-breakdown')
+  @ApiOperation({ summary: 'Mês corrente: bruto, taxa real do Asaas, % da plataforma e líquido do próprio coach' })
+  getMonthlyBreakdown(@Request() req: any) {
+    return this.service.getMonthlyBreakdown(req.user.id);
+  }
+
   @Roles('athlete')
   @Delete('subscriptions/me')
   @ApiOperation({ summary: 'Cancela a própria assinatura (mantém histórico, notifica o coach)' })

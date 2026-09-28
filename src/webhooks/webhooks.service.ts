@@ -58,6 +58,7 @@ export class WebhooksService {
           asaasPaymentId: paymentId,
           status,
           amount: payment.value,
+          netValue: payment.netValue ?? null,
           dueDate: new Date(payment.dueDate),
           invoiceUrl: payment.invoiceUrl,
           paidAt: status === 'paid' ? new Date() : null,
@@ -65,6 +66,7 @@ export class WebhooksService {
         update: {
           status,
           invoiceUrl: payment.invoiceUrl,
+          netValue: payment.netValue ?? null,
           ...(status === 'paid' ? { paidAt: new Date() } : {}),
         },
       });

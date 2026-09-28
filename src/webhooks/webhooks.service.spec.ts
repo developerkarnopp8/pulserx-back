@@ -17,7 +17,7 @@ function build(over: { existingPayment?: any; localSubscription?: any } = {}) {
   };
   const asaas = {
     getPayment: jest.fn().mockResolvedValue({
-      id: 'pay_1', status: 'CONFIRMED', value: 149, dueDate: '2026-10-01',
+      id: 'pay_1', status: 'CONFIRMED', value: 149, netValue: 147.01, dueDate: '2026-10-01',
       invoiceUrl: 'https://asaas.com/i/pay_1', subscription: 'sub_asaas_1',
     }),
   };
@@ -67,7 +67,7 @@ describe('WebhooksService.processPaymentEvent', () => {
 
     expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { asaasPaymentId: 'pay_1' },
-      update: expect.objectContaining({ status: 'paid', paidAt: expect.any(Date) }),
+      update: expect.objectContaining({ status: 'paid', paidAt: expect.any(Date), netValue: 147.01 }),
     }));
     expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
       where: { id: 'sub1', status: 'PAST_DUE' },
@@ -86,8 +86,17 @@ describe('WebhooksService.processPaymentEvent', () => {
       select: { id: true },
     });
     expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ subscriptionId: 'sub9', asaasPaymentId: 'pay_1', status: 'paid' }),
+      create: expect.objectContaining({ subscriptionId: 'sub9', asaasPaymentId: 'pay_1', status: 'paid', netValue: 147.01 }),
     }));
+  });
+
+  it('Asaas sem netValue: grava null (a taxa nunca é estimada)', async () => {
+    const { service, prisma, asaas } = build({ existingPayment: { subscriptionId: 'sub1' } });
+    asaas.getPayment.mockResolvedValue({ id: 'pay_1', status: 'PENDING', value: 149, dueDate: '2026-10-01', invoiceUrl: 'x', subscription: 'sub_asaas_1' });
+    await service.processPaymentEvent('PAYMENT_CREATED', 'pay_1');
+    const call = prisma.gatewayPayment.upsert.mock.calls[0][0];
+    expect(call.create.netValue).toBeNull();
+    expect(call.update.netValue).toBeNull();
   });
 
   it('pagamento sem assinatura local correspondente: só loga, não grava GatewayPayment nem mexe em Subscription', async () => {

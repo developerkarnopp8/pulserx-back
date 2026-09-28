@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PaymentGateway, SubscriptionStatus } from '@prisma/client';
+import { paymentBreakdown, sumBreakdowns } from './payment-breakdown';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { CoachContractsService } from './coach-contracts.service';
@@ -202,7 +203,7 @@ export class SubscriptionsService {
           create: { studentId: student.id, planId: plan.id, status: SubscriptionStatus.ACTIVE },
           update: {
             planId: plan.id, status: SubscriptionStatus.ACTIVE, canceledAt: null,
-            gateway: null, gatewaySubscriptionId: null,
+            gateway: null, gatewaySubscriptionId: null, platformFeePercent: null,
           },
           select: SUBSCRIPTION_VIEW,
         });
@@ -243,10 +244,12 @@ export class SubscriptionsService {
         create: {
           studentId: student.id, planId: plan.id, status: SubscriptionStatus.PAST_DUE,
           gateway: PaymentGateway.ASAAS, gatewaySubscriptionId: asaasSubscription.id,
+          platformFeePercent: contract.platformFeePercent,
         },
         update: {
           planId: plan.id, status: SubscriptionStatus.PAST_DUE, canceledAt: null,
           gateway: PaymentGateway.ASAAS, gatewaySubscriptionId: asaasSubscription.id,
+          platformFeePercent: contract.platformFeePercent,
         },
         select: SUBSCRIPTION_VIEW,
       });
@@ -259,9 +262,10 @@ export class SubscriptionsService {
           where: { asaasPaymentId: firstPayment.id },
           create: {
             subscriptionId: localSubscription.id, asaasPaymentId: firstPayment.id,
-            amount: firstPayment.value, dueDate: new Date(firstPayment.dueDate), invoiceUrl: firstPayment.invoiceUrl,
+            amount: firstPayment.value, netValue: firstPayment.netValue ?? null,
+            dueDate: new Date(firstPayment.dueDate), invoiceUrl: firstPayment.invoiceUrl,
           },
-          update: { invoiceUrl: firstPayment.invoiceUrl },
+          update: { invoiceUrl: firstPayment.invoiceUrl, netValue: firstPayment.netValue ?? null },
         });
       }
 
@@ -345,19 +349,21 @@ export class SubscriptionsService {
    * (walletId/%), só o que já é seguro mostrar (o próprio coach vendo as cobranças dos alunos dele).
    */
   async listGatewayPayments(coachId: string) {
-    return this.prisma.gatewayPayment.findMany({
+    const payments = await this.prisma.gatewayPayment.findMany({
       where: { subscription: { student: { coachId } } },
       select: {
         id: true,
         asaasPaymentId: true,
         status: true,
         amount: true,
+        netValue: true,
         dueDate: true,
         paidAt: true,
         invoiceUrl: true,
         createdAt: true,
         subscription: {
           select: {
+            platformFeePercent: true,
             student: { select: { id: true, user: { select: { name: true } } } },
             plan: { select: { name: true } },
           },
@@ -365,6 +371,35 @@ export class SubscriptionsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+    // Divisão real (Asaas → plataforma → coach) de cada cobrança; o % é o gravado na assinatura.
+    return payments.map(({ netValue, subscription: { platformFeePercent, ...subscription }, ...p }) => ({
+      ...p,
+      subscription,
+      breakdown: paymentBreakdown(p.amount, netValue, platformFeePercent),
+    }));
+  }
+
+  /**
+   * Totais do mês corrente das cobranças PAGAS dos alunos do coach (bruto, taxa do Asaas,
+   * plataforma e líquido do coach) + o % atual do contrato. Decisão do dono (2026-09-28): o coach
+   * vê o % da plataforma e a taxa do gateway pra ter controle do que recebe.
+   */
+  async getMonthlyBreakdown(coachId: string) {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const [paid, contract] = await Promise.all([
+      this.prisma.gatewayPayment.findMany({
+        where: { status: 'paid', paidAt: { gte: start, lt: end }, subscription: { student: { coachId } } },
+        select: { amount: true, netValue: true, subscription: { select: { platformFeePercent: true } } },
+      }),
+      this.prisma.coachContract.findUnique({ where: { coachId }, select: { platformFeePercent: true } }),
+    ]);
+    return {
+      // null = o admin ainda não definiu o contrato (diferente de 0% combinado) — a tela avisa.
+      currentPlatformFeePercent: contract ? Number(contract.platformFeePercent) : null,
+      month: sumBreakdowns(paid.map(p => paymentBreakdown(p.amount, p.netValue, p.subscription.platformFeePercent))),
+    };
   }
 
   /**
