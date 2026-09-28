@@ -73,7 +73,7 @@ describe('AsaasService', () => {
   });
 
   describe('createSubscription', () => {
-    it('monta o payload certo: PIX, mensal, valor em reais, split pro coach', async () => {
+    it('monta o payload certo: forma a escolher, mensal, valor em reais, split pro coach', async () => {
       fetchMock.mockResolvedValue(jsonResponse(200, { id: 'sub_1', status: 'ACTIVE' }));
       const service = new AsaasService();
 
@@ -85,7 +85,7 @@ describe('AsaasService', () => {
       expect(call[0]).toBe('https://api-sandbox.asaas.com/v3/subscriptions');
       const body = JSON.parse(call[1].body);
       expect(body.customer).toBe('cus_1');
-      expect(body.billingType).toBe('PIX');
+      expect(body.billingType).toBe('UNDEFINED'); // aluno escolhe PIX, boleto ou cartão na fatura
       expect(body.cycle).toBe('MONTHLY');
       expect(body.value).toBe(149);
       expect(body.externalReference).toBe('local-sub-1');
@@ -132,19 +132,24 @@ describe('AsaasService', () => {
   });
 
   describe('tratamento de erro', () => {
-    it('erro 4xx com description: BadRequestException com a mensagem do Asaas', async () => {
-      fetchMock.mockResolvedValue(jsonResponse(422, { errors: [{ description: 'CPF inválido' }] }));
+    it('erro 4xx: texto do Asaas NUNCA vai pro cliente (pode citar walletId/ids) — só pro log', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(400, { errors: [{ description: 'Wallet [00000000-0000] inexistente.' }] }));
       const service = new AsaasService();
+      const logSpy = jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
 
-      await expect(service.createCustomer('Ana', 'ana@x.com', '000')).rejects.toThrow(BadRequestException);
-      await expect(service.createCustomer('Ana', 'ana@x.com', '000')).rejects.toThrow('CPF inválido');
+      const err = await service.createCustomer('Ana', 'ana@x.com', '000').catch(e => e);
+
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.message).toBe('Não foi possível gerar a cobrança agora. Confira seus dados ou fale com o seu treinador.');
+      expect(err.message).not.toContain('Wallet');
+      expect(JSON.stringify(logSpy.mock.calls)).toContain('inexistente');
     });
 
-    it('erro 4xx sem description: BadRequestException com mensagem padrão', async () => {
+    it('erro 4xx sem description: mesma mensagem neutra', async () => {
       fetchMock.mockResolvedValue(jsonResponse(400, {}));
       const service = new AsaasService();
 
-      await expect(service.createCustomer('Ana', 'ana@x.com', '000')).rejects.toThrow('Não foi possível concluir a operação com o gateway de pagamento.');
+      await expect(service.createCustomer('Ana', 'ana@x.com', '000')).rejects.toThrow('Não foi possível gerar a cobrança agora.');
     });
 
     it('erro 5xx: ServiceUnavailableException', async () => {

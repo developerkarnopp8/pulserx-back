@@ -64,7 +64,9 @@ export class AsaasService {
     if (!res.ok) {
       const description = body?.errors?.[0]?.description;
       this.logger.error(`Asaas retornou erro (${path})`, JSON.stringify({ status: res.status, description }));
-      if (res.status < 500) throw new BadRequestException(description || 'Não foi possível concluir a operação com o gateway de pagamento.');
+      // O texto do Asaas fica só no log: pode citar dado interno (walletId do coach, ids) e não é
+      // mensagem pro aluno. Quem chamou recebe um texto neutro, em português.
+      if (res.status < 500) throw new BadRequestException('Não foi possível gerar a cobrança agora. Confira seus dados ou fale com o seu treinador.');
       throw new ServiceUnavailableException('O serviço de pagamentos está indisponível no momento. Tente novamente em instantes.');
     }
     return body as T;
@@ -92,7 +94,9 @@ export class AsaasService {
       method: 'POST',
       body: JSON.stringify({
         customer: params.customerId,
-        billingType: 'PIX',
+        // Forma "a escolher": na fatura do Asaas o aluno escolhe PIX, boleto ou cartão a cada mês
+        // (decisão do dono). Cartão com débito automático é uma etapa separada.
+        billingType: 'UNDEFINED',
         cycle: 'MONTHLY',
         value: params.valueCents / 100,
         nextDueDate: new Date().toISOString().slice(0, 10),
