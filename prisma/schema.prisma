@@ -222,6 +222,8 @@ model ExerciseLibrary {
   coachId     String
   name        String
   youtubeUrl  String?
+  /// Capa enviada pelo coach (Cloudinary). Sem ela, o card usa a miniatura do vídeo ou fica compacto.
+  imageUrl    String?
   sets        Int?
   reps        String?
   duration    String?
@@ -229,10 +231,16 @@ model ExerciseLibrary {
   loadPercent Float?
   category    String?
   notes       String?
+  /// Veio sozinho dos planos do coach (sincronização automática), não cadastrado à mão.
+  autoImported Boolean @default(false)
+  /// Importado e depois excluído pelo coach: fica oculto (não volta na próxima sincronização).
+  hidden       Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   coach User @relation("CoachLibrary", fields: [coachId], references: [id], onDelete: Cascade)
+
+  @@index([coachId])
 
   @@map("exercise_library")
 }
