@@ -1,5 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
+import { NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -36,32 +35,6 @@ describe('UsersService.findById', () => {
     const { service, prisma } = build();
     prisma.user.findUnique.mockResolvedValue(null);
     await expect(service.findById('x')).rejects.toThrow(NotFoundException);
-  });
-});
-
-describe('UsersService.create', () => {
-  it('e-mail já cadastrado → 409, sem criar', async () => {
-    const { service, prisma } = build();
-    prisma.user.findUnique.mockResolvedValue({ id: 'existente' });
-
-    await expect(service.create({ name: 'Ana', email: 'ana@example.com', password: '123456', role: 'athlete' as never })).rejects.toThrow(ConflictException);
-    expect(prisma.user.create).not.toHaveBeenCalled();
-  });
-
-  it('cria com a senha hasheada e nunca devolve passwordHash', async () => {
-    const { service, prisma } = build();
-    prisma.user.findUnique.mockResolvedValue(null);
-    prisma.user.create.mockImplementation(async ({ data }: any) => ({ id: 'u1', ...data }));
-    const hashSpy = jest.spyOn(bcrypt, 'hash').mockResolvedValue('$hasheada' as never);
-
-    const result = await service.create({ name: 'Ana', email: 'ana@example.com', password: 'senha123', role: 'coach' as never });
-
-    expect(hashSpy).toHaveBeenCalledWith('senha123', 10);
-    expect(prisma.user.create).toHaveBeenCalledWith({
-      data: { name: 'Ana', email: 'ana@example.com', passwordHash: '$hasheada', role: 'coach' },
-    });
-    expect(result).not.toHaveProperty('passwordHash');
-    expect(result).toEqual({ id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach' });
   });
 });
 

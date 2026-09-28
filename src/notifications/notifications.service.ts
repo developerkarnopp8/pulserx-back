@@ -4,7 +4,7 @@ import { MessagesGateway } from '../messages/messages.gateway';
 
 export type NotificationType =
   | 'plan_published' | 'new_message' | 'workout_skipped' | 'new_pr' | 'ai_credit_exhausted'
-  | 'new_lead' | 'subscription_canceled';
+  | 'new_lead' | 'subscription_canceled' | 'new_student';
 
 @Injectable()
 export class NotificationsService {
