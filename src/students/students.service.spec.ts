@@ -61,6 +61,17 @@ describe('StudentsService.findAll — completionPercent computado dinamicamente'
     expect(select).not.toHaveProperty('asaasCustomerId');
   });
 
+  it('inclui a assinatura (plano/status/datas), sem gateway/gatewaySubscriptionId', async () => {
+    prisma.student.findMany.mockResolvedValue([]);
+    await service.findAll('coach-1');
+    const select = prisma.student.findMany.mock.calls[0][0].select;
+    expect(select.subscription.select).toEqual(expect.objectContaining({
+      status: true, renewsAt: true, plan: expect.any(Object),
+    }));
+    expect(select.subscription.select).not.toHaveProperty('gateway');
+    expect(select.subscription.select).not.toHaveProperty('gatewaySubscriptionId');
+  });
+
   it('retorna 0% quando o aluno nao tem plano no mes atual', async () => {
     prisma.student.findMany.mockResolvedValue([
       { id: 'student-1', userId: 'athlete-1', currentMonth: 3, completionPercent: 68 },
