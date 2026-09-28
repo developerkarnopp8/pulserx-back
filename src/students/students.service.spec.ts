@@ -53,6 +53,14 @@ describe('StudentsService.findAll — completionPercent computado dinamicamente'
     );
   });
 
+  it('a seleção nunca inclui cpf/asaasCustomerId (listagem do coach não precisa disso)', async () => {
+    prisma.student.findMany.mockResolvedValue([]);
+    await service.findAll('coach-1');
+    const select = prisma.student.findMany.mock.calls[0][0].select;
+    expect(select).not.toHaveProperty('cpf');
+    expect(select).not.toHaveProperty('asaasCustomerId');
+  });
+
   it('retorna 0% quando o aluno nao tem plano no mes atual', async () => {
     prisma.student.findMany.mockResolvedValue([
       { id: 'student-1', userId: 'athlete-1', currentMonth: 3, completionPercent: 68 },
@@ -121,6 +129,15 @@ describe('StudentsService.findByUserId', () => {
     const service = new StudentsService(prisma);
     await expect(service.findByUserId('u1')).rejects.toThrow('Perfil de aluno não encontrado');
   });
+
+  it('a seleção nunca inclui cpf/asaasCustomerId (dado de pagamento, não é do perfil geral)', async () => {
+    const prisma: any = { student: { findFirst: jest.fn().mockResolvedValue({ id: 's1' }) } };
+    const service = new StudentsService(prisma);
+    await service.findByUserId('u1');
+    const select = prisma.student.findFirst.mock.calls[0][0].select;
+    expect(select).not.toHaveProperty('cpf');
+    expect(select).not.toHaveProperty('asaasCustomerId');
+  });
 });
 
 describe('StudentsService.findOne — checagem de dono (IDOR)', () => {
@@ -154,6 +171,14 @@ describe('StudentsService.findOne — checagem de dono (IDOR)', () => {
   it('admin não tem acesso especial aqui (só coach dono ou o próprio)', async () => {
     const { service } = build();
     await expect(service.findOne('s1', { id: 'admin-1', role: 'admin' })).rejects.toThrow('Você não tem acesso a este aluno.');
+  });
+
+  it('a seleção nunca inclui cpf/asaasCustomerId (coach não precisa ver o CPF do aluno aqui)', async () => {
+    const { service, prisma } = build();
+    await service.findOne('s1', { id: 'coach-1', role: 'coach' });
+    const select = prisma.student.findUnique.mock.calls[0][0].select;
+    expect(select).not.toHaveProperty('cpf');
+    expect(select).not.toHaveProperty('asaasCustomerId');
   });
 
   it('aluno inexistente → 404', async () => {
@@ -226,7 +251,17 @@ describe('StudentsService.update / remove — dono (coach) via getOwnedByCoach',
   it('update: coach dono atualiza', async () => {
     const { service, prisma } = build(owned);
     await expect(service.update('s1', 'coach-1', { goal: 'novo' })).resolves.toEqual({ id: 's1', goal: 'novo' });
-    expect(prisma.student.update).toHaveBeenCalledWith({ where: { id: 's1' }, data: { goal: 'novo' } });
+    const call = prisma.student.update.mock.calls[0][0];
+    expect(call.where).toEqual({ id: 's1' });
+    expect(call.data).toEqual({ goal: 'novo' });
+  });
+
+  it('update: a resposta nunca inclui cpf/asaasCustomerId (dado de pagamento, não é pra essa rota)', async () => {
+    const { service, prisma } = build(owned);
+    await service.update('s1', 'coach-1', { goal: 'novo' });
+    const select = prisma.student.update.mock.calls[0][0].select;
+    expect(select).not.toHaveProperty('cpf');
+    expect(select).not.toHaveProperty('asaasCustomerId');
   });
 
   it('remove: aluno de outro coach → 403, sem deletar', async () => {

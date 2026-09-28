@@ -5,27 +5,55 @@ const admin = { id: 'admin-1', role: 'admin' };
 const FUTURE = new Date(Date.now() + 7 * 86_400_000).toISOString();
 const PAST = new Date(Date.now() - 86_400_000).toISOString();
 
-function build(over: { student?: any; plan?: any; current?: any; myStudent?: any } = {}) {
+function build(over: { student?: any; plan?: any; current?: any; myStudent?: any; contract?: any } = {}) {
   const prisma = {
     student: {
       findUnique: jest.fn().mockResolvedValue('student' in over ? over.student : { id: 's1', coachId: 'coach-1' }),
       findFirst: jest.fn().mockResolvedValue(
-        'myStudent' in over ? over.myStudent : { id: 's1', coachId: 'coach-1', user: { name: 'Ana' } },
+        'myStudent' in over
+          ? over.myStudent
+          : { id: 's1', coachId: 'coach-1', cpf: null, asaasCustomerId: null, user: { name: 'Ana', email: 'ana@example.com' } },
       ),
+      update: jest.fn().mockImplementation(async ({ data }) => ({ id: 's1', ...data })),
     },
     subscriptionPlan: {
-      findUnique: jest.fn().mockResolvedValue('plan' in over ? over.plan : { id: 'p1', coachId: 'coach-1', active: true }),
+      findUnique: jest.fn().mockResolvedValue(
+        'plan' in over ? over.plan : { id: 'p1', coachId: 'coach-1', active: true, isFree: false, priceCents: 14900 },
+      ),
     },
     subscription: {
       findUnique: jest.fn().mockResolvedValue('current' in over ? over.current : null),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'sub1' }),
       upsert: jest.fn().mockImplementation(async ({ create }) => ({ id: 'sub1', ...create })),
       update: jest.fn().mockImplementation(async ({ data }) => ({ id: 'sub1', studentId: 's1', ...data })),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    gatewayPayment: {
+      upsert: jest.fn().mockResolvedValue({ id: 'pay1' }),
+    },
+    $executeRaw: jest.fn().mockResolvedValue(undefined),
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation((cb: any) => cb(prisma));
   const access = { getViewableCategories: jest.fn().mockResolvedValue(['CORE']) };
   const notifications = { create: jest.fn() };
-  return { service: new SubscriptionsService(prisma as any, access as any, notifications as any), prisma, access, notifications };
+  const coachContracts = {
+    getContractForCharge: jest.fn().mockResolvedValue(
+      'contract' in over ? over.contract : { walletId: 'wallet-1', platformFeePercent: 20 },
+    ),
+  };
+  const asaas = {
+    createCustomer: jest.fn().mockResolvedValue({ id: 'cus_1' }),
+    createSubscription: jest.fn().mockResolvedValue({ id: 'sub_asaas_1' }),
+    cancelSubscription: jest.fn().mockResolvedValue(undefined),
+    listPaymentsBySubscription: jest.fn().mockResolvedValue([
+      { id: 'pay_1', value: 149, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' },
+    ]),
+  };
+  return {
+    service: new SubscriptionsService(prisma as any, access as any, notifications as any, coachContracts as any, asaas as any),
+    prisma, access, notifications, coachContracts, asaas,
+  };
 }
 
 describe('SubscriptionsService.assign', () => {
@@ -193,5 +221,177 @@ describe('SubscriptionsService.cancelMine', () => {
     expect(result).toEqual({ id: 'sub1', status: 'CANCELED' });
     expect(prisma.subscription.update).not.toHaveBeenCalled();
     expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('com assinatura no gateway: cancela no Asaas ANTES de mudar o status local', async () => {
+    const { service, prisma, asaas } = build({
+      current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_1' },
+    });
+
+    await service.cancelMine(athlete);
+
+    expect(asaas.cancelSubscription).toHaveBeenCalledWith('sub_asaas_1');
+    expect(prisma.subscription.update).toHaveBeenCalled();
+  });
+
+  it('se o Asaas rejeitar o cancelamento, a assinatura local continua intacta', async () => {
+    const { service, prisma, asaas } = build({
+      current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_1' },
+    });
+    asaas.cancelSubscription.mockRejectedValue(new Error('Asaas fora do ar'));
+
+    await expect(service.cancelMine(athlete)).rejects.toThrow('Asaas fora do ar');
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('já cancelada: nunca chama o gateway de novo, mesmo com gatewaySubscriptionId salvo', async () => {
+    const { service, asaas } = build({
+      current: { id: 'sub1', status: 'CANCELED', gatewaySubscriptionId: 'sub_asaas_1' },
+    });
+
+    const result = await service.cancelMine(athlete);
+
+    expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('gatewaySubscriptionId');
+  });
+});
+
+describe('SubscriptionsService.checkout', () => {
+  const athlete = { id: 'u1', role: 'athlete' };
+
+  it('plano gratuito: assina direto, sem gateway nem checkoutUrl', async () => {
+    const { service, prisma, coachContracts, asaas } = build({
+      plan: { id: 'p1', coachId: 'coach-1', active: true, isFree: true, priceCents: 0 },
+    });
+
+    const result = await service.checkout(athlete, { planId: 'p1' });
+
+    expect(result).toEqual({ subscription: expect.objectContaining({ status: 'ACTIVE' }), checkoutUrl: null });
+    expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { studentId: 's1' },
+      create: { studentId: 's1', planId: 'p1', status: 'ACTIVE' },
+    }));
+    expect(coachContracts.getContractForCharge).not.toHaveBeenCalled();
+    expect(asaas.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('plano de outro coach ou inativo → 404, nada é gravado', async () => {
+    const other = build({ plan: { id: 'p1', coachId: 'coach-9', active: true, isFree: true, priceCents: 0 } });
+    await expect(other.service.checkout(athlete, { planId: 'p1' })).rejects.toThrow('Plano não encontrado');
+
+    const inactive = build({ plan: { id: 'p1', coachId: 'coach-1', active: false, isFree: false, priceCents: 14900 } });
+    await expect(inactive.service.checkout(athlete, { planId: 'p1' })).rejects.toThrow('Plano não encontrado');
+  });
+
+  it('usuário sem perfil de aluno → 404', async () => {
+    const { service, prisma } = build();
+    prisma.student.findFirst.mockResolvedValue(null);
+    await expect(service.checkout(athlete, { planId: 'p1' })).rejects.toThrow('Perfil de aluno não encontrado');
+  });
+
+  it('plano pago sem o coach ter cadastrado carteira → 400, nada é criado no Asaas', async () => {
+    const { service, asaas } = build({ contract: { walletId: null, platformFeePercent: 20 } });
+    await expect(service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' })).rejects.toThrow('não configurou o recebimento');
+    expect(asaas.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('plano pago, aluno sem CPF salvo e sem CPF no corpo → 400', async () => {
+    const { service } = build();
+    await expect(service.checkout(athlete, { planId: 'p1' })).rejects.toThrow('Informe um CPF válido');
+  });
+
+  it('plano pago, CPF inválido no corpo → 400, não chega a chamar o Asaas', async () => {
+    const { service, asaas } = build();
+    await expect(service.checkout(athlete, { planId: 'p1', cpf: '111.111.111-11' })).rejects.toThrow('Informe um CPF válido');
+    expect(asaas.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('plano pago, primeiro checkout: salva CPF, cria customer no Asaas, cria assinatura e o pagamento gerado', async () => {
+    const { service, prisma, asaas } = build();
+
+    const result = await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+
+    expect(prisma.student.update).toHaveBeenCalledWith({ where: { id: 's1' }, data: { cpf: '52998224725' } });
+    expect(asaas.createCustomer).toHaveBeenCalledWith('Ana', 'ana@example.com', '52998224725');
+    expect(prisma.student.update).toHaveBeenCalledWith({ where: { id: 's1' }, data: { asaasCustomerId: 'cus_1' } });
+    expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: 'cus_1', valueCents: 14900, walletId: 'wallet-1', coachPercent: 80, externalReference: 's1',
+    }));
+    expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { studentId: 's1' },
+      create: expect.objectContaining({ status: 'PAST_DUE', gateway: 'ASAAS', gatewaySubscriptionId: 'sub_asaas_1' }),
+    }));
+    expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { asaasPaymentId: 'pay_1' },
+      create: expect.objectContaining({ subscriptionId: 'sub1', asaasPaymentId: 'pay_1', invoiceUrl: 'https://asaas.com/i/pay_1' }),
+    }));
+    expect(result).toEqual({ subscription: expect.anything(), checkoutUrl: 'https://asaas.com/i/pay_1' });
+  });
+
+  it('aluno que já tem CPF/customer salvos: reusa os dois, não grava de novo nem exige CPF no corpo', async () => {
+    const { service, prisma, asaas } = build({
+      myStudent: { id: 's1', coachId: 'coach-1', cpf: '52998224725', asaasCustomerId: 'cus_existente', user: { name: 'Ana', email: 'ana@example.com' } },
+    });
+
+    await service.checkout(athlete, { planId: 'p1' });
+
+    expect(prisma.student.update).not.toHaveBeenCalled();
+    expect(asaas.createCustomer).not.toHaveBeenCalled();
+    expect(asaas.createSubscription).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_existente' }));
+  });
+
+  it('Asaas não gera pagamento na hora (lista vazia): checkoutUrl null, sem gravar GatewayPayment', async () => {
+    const { service, prisma, asaas } = build();
+    asaas.listPaymentsBySubscription.mockResolvedValue([]);
+
+    const result = await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+
+    expect(result.checkoutUrl).toBeNull();
+    expect(prisma.gatewayPayment.upsert).not.toHaveBeenCalled();
+  });
+
+  it('usa o lock de aconselhamento do Postgres por aluno (evita duas assinaturas concorrentes)', async () => {
+    const { service, prisma } = build();
+    await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+    expect(prisma.$executeRaw).toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
+  });
+
+  it('já tem assinatura paga anterior: cancela no Asaas ANTES de criar a nova (troca de plano/retry não duplica cobrança)', async () => {
+    const { service, asaas } = build({ current: { gatewaySubscriptionId: 'sub_asaas_antiga' } });
+
+    await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+
+    expect(asaas.cancelSubscription).toHaveBeenCalledWith('sub_asaas_antiga');
+    expect(asaas.createSubscription).toHaveBeenCalled();
+  });
+
+  it('se o cancelamento da assinatura anterior falhar, o checkout inteiro falha (fail-closed) e NÃO cria uma nova', async () => {
+    const { service, asaas } = build({ current: { gatewaySubscriptionId: 'sub_asaas_antiga' } });
+    asaas.cancelSubscription.mockRejectedValue(new Error('Asaas fora do ar'));
+
+    await expect(service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' })).rejects.toThrow('Asaas fora do ar');
+    expect(asaas.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('downgrade pro Free com assinatura paga anterior: cancela a antiga no Asaas e limpa gateway/gatewaySubscriptionId local', async () => {
+    const { service, prisma, asaas } = build({
+      plan: { id: 'p1', coachId: 'coach-1', active: true, isFree: true, priceCents: 0 },
+      current: { gatewaySubscriptionId: 'sub_asaas_antiga' },
+    });
+
+    const result = await service.checkout(athlete, { planId: 'p1' });
+
+    expect(asaas.cancelSubscription).toHaveBeenCalledWith('sub_asaas_antiga');
+    expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ status: 'ACTIVE', gateway: null, gatewaySubscriptionId: null }),
+    }));
+    expect(result.checkoutUrl).toBeNull();
+  });
+
+  it('sem assinatura anterior (primeira vez): não chama cancelSubscription', async () => {
+    const { service, asaas } = build({ current: null });
+    await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+    expect(asaas.cancelSubscription).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { SubscriptionPlansController } from './subscription-plans.controller';
 import { SubscriptionPlansService } from './subscription-plans.service';
 import { SubscriptionsController } from './subscriptions.controller';
 import { SubscriptionsService } from './subscriptions.service';
+import { CoachContractsService } from './coach-contracts.service';
 import { AdminController } from '../admin/admin.controller';
 
 const rolesOf = (cls: any, method?: string) =>
@@ -20,9 +21,12 @@ describe('Controllers da R3 — guards e papéis', () => {
     expect(rolesOf(SubscriptionPlansController)).toEqual(['coach', 'admin']);
   });
 
-  it('assinaturas: aluno só lê/cancela a própria; atribuir/ler/remover de um aluno é coach/admin', () => {
+  it('assinaturas: aluno só lê/cancela/assina a própria; atribuir/ler/remover de um aluno é coach/admin; carteira é só do coach', () => {
     expect(rolesOf(SubscriptionsController, 'getMine')).toEqual(['athlete']);
     expect(rolesOf(SubscriptionsController, 'cancelMine')).toEqual(['athlete']);
+    expect(rolesOf(SubscriptionsController, 'checkout')).toEqual(['athlete']);
+    expect(rolesOf(SubscriptionsController, 'getWallet')).toEqual(['coach']);
+    expect(rolesOf(SubscriptionsController, 'setWallet')).toEqual(['coach']);
     for (const m of ['getForStudent', 'assign', 'remove']) {
       expect(rolesOf(SubscriptionsController, m)).toEqual(['coach', 'admin']);
     }
@@ -39,10 +43,32 @@ describe('Controllers da R3 — guards e papéis', () => {
 
 describe('SubscriptionsController — delegação', () => {
   function build() {
-    const service = { getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn(), cancelMine: jest.fn() };
-    const controller = new SubscriptionsController(service as unknown as SubscriptionsService);
-    return { controller, service };
+    const service = {
+      getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn(),
+      cancelMine: jest.fn(), checkout: jest.fn(),
+    };
+    const coachContracts = { getWallet: jest.fn(), setWallet: jest.fn() };
+    const controller = new SubscriptionsController(service as unknown as SubscriptionsService, coachContracts as unknown as CoachContractsService);
+    return { controller, service, coachContracts };
   }
+
+  it('checkout repassa req.user + dto', () => {
+    const { controller, service } = build();
+    const req = { user: { id: 'athlete-1', role: 'athlete' } };
+    const dto = { planId: 'plan-1' };
+    controller.checkout(req, dto as never);
+    expect(service.checkout).toHaveBeenCalledWith(req.user, dto);
+  });
+
+  it('getWallet/setWallet usam o id do próprio coach logado', () => {
+    const { controller, coachContracts } = build();
+    const req = { user: { id: 'coach-1', role: 'coach' } };
+    controller.getWallet(req);
+    expect(coachContracts.getWallet).toHaveBeenCalledWith('coach-1');
+
+    controller.setWallet(req, { walletId: 'wallet-1' } as never);
+    expect(coachContracts.setWallet).toHaveBeenCalledWith('coach-1', 'wallet-1');
+  });
 
   it('getMine usa req.user (atleta)', () => {
     const { controller, service } = build();

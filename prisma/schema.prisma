@@ -103,6 +103,11 @@ model Student {
   currentMonth      Int      @default(1)
   currentWeek       Int      @default(1)
   completionPercent Float    @default(0)
+  /// Coletado só no momento do checkout de uma assinatura paga (nunca no cadastro) — exigido
+  /// pelo gateway de pagamento (Asaas) pra criar o cliente que vai pagar.
+  cpf               String?  @unique
+  /// Id do "customer" do aluno no Asaas — criado uma vez, reusado entre trocas de plano.
+  asaasCustomerId   String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -440,11 +445,49 @@ model Subscription {
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
-  student Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  plan    SubscriptionPlan @relation(fields: [planId], references: [id])
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan            SubscriptionPlan @relation(fields: [planId], references: [id])
+  gatewayPayments GatewayPayment[]
 
   @@index([planId])
   @@map("subscriptions")
+}
+
+/// Cada cobrança individual gerada pela assinatura recorrente no gateway (Asaas) — uma por ciclo.
+/// Existe pra idempotência do webhook (nunca processar o mesmo pagamento duas vezes) e pra dar
+/// visibilidade de cobranças passadas; nunca é criado/editado pelo aluno ou coach diretamente.
+model GatewayPayment {
+  id             String        @id @default(uuid())
+  subscriptionId String
+  asaasPaymentId String        @unique
+  status         PaymentStatus @default(pending)
+  amount         Float
+  dueDate        DateTime
+  paidAt         DateTime?
+  /// Link da fatura hospedada no Asaas (PIX/boleto/cartão) — pro aluno pagar.
+  invoiceUrl     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@map("gateway_payments")
+}
+
+/// Registro mínimo de cada notificação recebida do gateway — só o necessário pra auditoria/
+/// debug (id do evento, se foi processado). Nunca guarda o corpo cru (pode conter CPF/e-mail
+/// do pagador — reter isso indefinidamente sem necessidade é o mesmo achado LGPD já corrigido
+/// no AmoraRunning; aqui já nasce sem esse problema).
+model WebhookLog {
+  id             String    @id @default(uuid())
+  provider       String    @default("ASAAS")
+  event          String
+  asaasPaymentId String?
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@map("webhook_logs")
 }
 
 /// Contrato do coach com a plataforma — SÓ o admin edita. Nunca exposto ao atleta.
@@ -479,22 +522,22 @@ model PlatformSettings {
 /// Perfil público do coach (1:1) — banner, bio, slug da URL. Só existe/aparece
 /// depois que o coach configura e publica; visitante nunca cria conta aqui.
 model CoachProfile {
-  id        String   @id @default(uuid())
-  coachId   String   @unique
+  id        String  @id @default(uuid())
+  coachId   String  @unique
   /// URL da página pública (/c/:slug) — único, formato validado no DTO (kebab-case).
-  slug      String   @unique
+  slug      String  @unique
   bio       String?
   bannerUrl String?
-  published Boolean  @default(false)
+  published Boolean @default(false)
 
   /// Foto pessoal do coach (distinta do banner do hero) — seção "Sobre o coach".
-  photoUrl        String?
+  photoUrl         String?
   /// Frase de destaque do hero (ex.: "Treine com precisão tática..."). Null = usa o texto padrão do template.
-  headline        String?
+  headline         String?
   /// Parágrafo de apoio abaixo do headline. Null = usa o texto padrão do template.
-  subheadline     String?
+  subheadline      String?
   /// Citação em destaque do coach na seção "Sobre o coach".
-  quote           String?
+  quote            String?
   /// Selo curto de credencial (ex.: "Semifinals CrossFit Games").
   achievementBadge String?
   yearsExperience  Int?

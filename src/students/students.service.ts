@@ -7,6 +7,24 @@ import { CreateStudentDto, UpdateStudentDto } from './dto/create-student.dto';
 
 type AuthUser = { id: string; role: string };
 
+/**
+ * Sem `cpf`/`asaasCustomerId` — são dado sensível coletado só pro fluxo de pagamento
+ * (`SubscriptionsService.checkout`), que já os busca com o próprio `select` dedicado.
+ * Essas rotas (listagem/detalhe/perfil do aluno) nunca precisaram disso; devolver por
+ * `include`/sem `select` vazaria o CPF de todo aluno pro coach (e pro front) sem necessidade.
+ */
+const STUDENT_SAFE_SELECT = {
+  id: true,
+  userId: true,
+  coachId: true,
+  goal: true,
+  currentMonth: true,
+  currentWeek: true,
+  completionPercent: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 @Injectable()
 export class StudentsService {
   constructor(private prisma: PrismaService) {}
@@ -23,7 +41,8 @@ export class StudentsService {
   async findByUserId(userId: string) {
     const student = await this.prisma.student.findFirst({
       where: { userId },
-      include: {
+      select: {
+        ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
       },
     });
@@ -34,7 +53,8 @@ export class StudentsService {
   async findAll(coachId: string) {
     const students = await this.prisma.student.findMany({
       where: { coachId },
-      include: {
+      select: {
+        ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -95,7 +115,8 @@ export class StudentsService {
   async findOne(id: string, user: AuthUser) {
     const student = await this.prisma.student.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
         trainingPlans: {
           where: { published: true },
@@ -141,6 +162,7 @@ export class StudentsService {
     return this.prisma.student.update({
       where: { id },
       data: dto,
+      select: STUDENT_SAFE_SELECT,
     });
   }
 
