@@ -30,6 +30,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     },
     gatewayPayment: {
       upsert: jest.fn().mockResolvedValue({ id: 'pay1' }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     $executeRaw: jest.fn().mockResolvedValue(undefined),
     $transaction: jest.fn(),
@@ -393,5 +394,32 @@ describe('SubscriptionsService.checkout', () => {
     const { service, asaas } = build({ current: null });
     await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
     expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe('SubscriptionsService.listGatewayPayments', () => {
+  it('busca as cobranças escopadas pelo coachId, mais recentes primeiro', async () => {
+    const { service, prisma } = build();
+    await service.listGatewayPayments('coach-1');
+    expect(prisma.gatewayPayment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subscription: { student: { coachId: 'coach-1' } } },
+      orderBy: { createdAt: 'desc' },
+    }));
+  });
+
+  it('a seleção nunca inclui gatewaySubscriptionId nem dado do CoachContract (walletId/%)', async () => {
+    const { service, prisma } = build();
+    await service.listGatewayPayments('coach-1');
+    const call = prisma.gatewayPayment.findMany.mock.calls[0][0];
+    expect(call.select).not.toHaveProperty('gatewaySubscriptionId');
+    expect(JSON.stringify(call.select)).not.toContain('walletId');
+    expect(JSON.stringify(call.select)).not.toContain('platformFeePercent');
+  });
+
+  it('devolve a lista tal como o prisma resolve', async () => {
+    const rows = [{ id: 'pay1', status: 'paid' }];
+    const { service, prisma } = build();
+    prisma.gatewayPayment.findMany.mockResolvedValue(rows);
+    await expect(service.listGatewayPayments('coach-1')).resolves.toBe(rows);
   });
 });

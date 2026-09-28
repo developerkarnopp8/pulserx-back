@@ -268,4 +268,32 @@ export class SubscriptionsService {
       return { subscription, checkoutUrl: firstPayment?.invoiceUrl ?? null };
     }, { timeout: 15_000 });
   }
+
+  /**
+   * Histórico real de cobranças do gateway (Asaas) dos alunos deste coach — pra tela de
+   * governança/repasses. Nunca inclui gatewaySubscriptionId nem qualquer campo do CoachContract
+   * (walletId/%), só o que já é seguro mostrar (o próprio coach vendo as cobranças dos alunos dele).
+   */
+  async listGatewayPayments(coachId: string) {
+    return this.prisma.gatewayPayment.findMany({
+      where: { subscription: { student: { coachId } } },
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        amount: true,
+        dueDate: true,
+        paidAt: true,
+        invoiceUrl: true,
+        createdAt: true,
+        subscription: {
+          select: {
+            student: { select: { id: true, user: { select: { name: true } } } },
+            plan: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 }

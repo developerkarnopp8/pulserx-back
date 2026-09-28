@@ -8,12 +8,36 @@ import { CreateCoachDto } from './dto/admin.dto';
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Lista coaches com o real por trás da governança da plataforma: % configurada por contrato
+   * (só o admin define, por coach — nunca um valor fixo global), quantos alunos ele tem, e o
+   * repasse real já pago (soma de GatewayPayment com status 'paid' dos alunos dele, dividido em
+   * quanto é da plataforma e quanto é do coach pela % vigente).
+   */
   async listCoaches() {
-    return this.prisma.user.findMany({
+    const coaches = await this.prisma.user.findMany({
       where: { role: 'coach' },
       select: { id: true, name: true, email: true, aiImportEnabled: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     });
+
+    return Promise.all(coaches.map(async coach => {
+      const [contract, studentCount, paidAgg] = await Promise.all([
+        this.prisma.coachContract.findUnique({ where: { coachId: coach.id }, select: { platformFeePercent: true } }),
+        this.prisma.student.count({ where: { coachId: coach.id } }),
+        this.prisma.gatewayPayment.aggregate({
+          where: { status: 'paid', subscription: { student: { coachId: coach.id } } },
+          _sum: { amount: true },
+        }),
+      ]);
+
+      const platformFeePercent = contract ? Number(contract.platformFeePercent) : 0;
+      const totalPaid = paidAgg._sum.amount ?? 0;
+      const platformCut = Math.round(totalPaid * platformFeePercent) / 100;
+      const coachCut = totalPaid - platformCut;
+
+      return { ...coach, platformFeePercent, studentCount, totalPaid, platformCut, coachCut };
+    }));
   }
 
   async createCoach(dto: CreateCoachDto): Promise<{ id: string; name: string; email: string; password: string }> {

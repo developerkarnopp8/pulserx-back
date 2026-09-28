@@ -50,6 +50,13 @@ export class SubscriptionsController {
     return this.coachContracts.setWallet(req.user.id, dto.walletId);
   }
 
+  @Roles('coach')
+  @Get('subscriptions/gateway-payments')
+  @ApiOperation({ summary: 'Histórico real de cobranças do gateway (Asaas) dos alunos do próprio coach' })
+  listGatewayPayments(@Request() req: any) {
+    return this.service.listGatewayPayments(req.user.id);
+  }
+
   @Roles('athlete')
   @Delete('subscriptions/me')
   @ApiOperation({ summary: 'Cancela a própria assinatura (mantém histórico, notifica o coach)' })
