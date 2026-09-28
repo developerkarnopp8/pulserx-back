@@ -30,6 +30,7 @@ describe('Controllers da R3 — guards e papéis', () => {
     expect(rolesOf(SubscriptionsController, 'setWallet')).toEqual(['coach']);
     expect(rolesOf(SubscriptionsController, 'listGatewayPayments')).toEqual(['coach']);
     expect(rolesOf(SubscriptionsController, 'getFinancialSummary')).toEqual(['coach']);
+    expect(rolesOf(SubscriptionsController, 'getMonthlyBreakdown')).toEqual(['coach']);
     for (const m of ['getForStudent', 'assign', 'remove']) {
       expect(rolesOf(SubscriptionsController, m)).toEqual(['coach', 'admin']);
     }
@@ -48,7 +49,7 @@ describe('SubscriptionsController — delegação', () => {
   function build() {
     const service = {
       getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn(),
-      cancelMine: jest.fn(), checkout: jest.fn(), listGatewayPayments: jest.fn(), getFinancialSummary: jest.fn(),
+      cancelMine: jest.fn(), checkout: jest.fn(), listGatewayPayments: jest.fn(), getFinancialSummary: jest.fn(), getMonthlyBreakdown: jest.fn(),
       listMyPayments: jest.fn(),
     };
     const coachContracts = { getWallet: jest.fn(), setWallet: jest.fn() };
@@ -79,6 +80,12 @@ describe('SubscriptionsController — delegação', () => {
     const req = { user: { id: 'coach-1', role: 'coach' } };
     controller.listGatewayPayments(req);
     expect(service.listGatewayPayments).toHaveBeenCalledWith('coach-1');
+  });
+
+  it('getMonthlyBreakdown usa o id do próprio coach logado', () => {
+    const { controller, service } = build();
+    controller.getMonthlyBreakdown({ user: { id: 'coach-1', role: 'coach' } });
+    expect(service.getMonthlyBreakdown).toHaveBeenCalledWith('coach-1');
   });
 
   it('getFinancialSummary usa o id do próprio coach logado', () => {

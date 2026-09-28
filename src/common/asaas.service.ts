@@ -25,6 +25,8 @@ export interface AsaasPayment {
   id: string;
   status: string;
   value: number;
+  /** Líquido depois da taxa do Asaas (o Asaas informa em todo pagamento). */
+  netValue?: number;
   dueDate: string;
   invoiceUrl: string;
   subscription?: string;

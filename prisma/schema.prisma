@@ -450,6 +450,9 @@ model Subscription {
   /// Preenchidos só na Rodada 4 (gateway de cobrança).
   gateway               PaymentGateway?
   gatewaySubscriptionId String?
+  /// % da plataforma usado no split desta assinatura no Asaas (gravado no checkout). O split é
+  /// fixado na criação da assinatura — mudar o contrato depois não altera as já criadas.
+  platformFeePercent    Float?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
@@ -470,6 +473,8 @@ model GatewayPayment {
   asaasPaymentId String        @unique
   status         PaymentStatus @default(pending)
   amount         Float
+  /// Valor líquido informado pelo Asaas (depois da taxa do gateway). null = ainda não informado.
+  netValue       Float?
   dueDate        DateTime
   paidAt         DateTime?
   /// Link da fatura hospedada no Asaas (PIX/boleto/cartão) — pro aluno pagar.

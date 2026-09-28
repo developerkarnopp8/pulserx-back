@@ -33,6 +33,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
       upsert: jest.fn().mockResolvedValue({ id: 'pay1' }),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    coachContract: { findUnique: jest.fn().mockResolvedValue(null) },
     $executeRaw: jest.fn().mockResolvedValue(undefined),
     $transaction: jest.fn(),
   };
@@ -49,7 +50,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     createSubscription: jest.fn().mockResolvedValue({ id: 'sub_asaas_1' }),
     cancelSubscription: jest.fn().mockResolvedValue(undefined),
     listPaymentsBySubscription: jest.fn().mockResolvedValue([
-      { id: 'pay_1', value: 149, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' },
+      { id: 'pay_1', value: 149, netValue: 147.01, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' },
     ]),
   };
   return {
@@ -272,6 +273,7 @@ describe('SubscriptionsService.checkout', () => {
     expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { studentId: 's1' },
       create: { studentId: 's1', planId: 'p1', status: 'ACTIVE' },
+      update: expect.objectContaining({ gateway: null, platformFeePercent: null }),
     }));
     expect(coachContracts.getContractForCharge).not.toHaveBeenCalled();
     expect(asaas.createSubscription).not.toHaveBeenCalled();
@@ -321,13 +323,25 @@ describe('SubscriptionsService.checkout', () => {
     }));
     expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { studentId: 's1' },
-      create: expect.objectContaining({ status: 'PAST_DUE', gateway: 'ASAAS', gatewaySubscriptionId: 'sub_asaas_1' }),
+      create: expect.objectContaining({ status: 'PAST_DUE', gateway: 'ASAAS', gatewaySubscriptionId: 'sub_asaas_1', platformFeePercent: 20 }),
+      update: expect.objectContaining({ platformFeePercent: 20 }),
     }));
-    expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith({
       where: { asaasPaymentId: 'pay_1' },
-      create: expect.objectContaining({ subscriptionId: 'sub1', asaasPaymentId: 'pay_1', invoiceUrl: 'https://asaas.com/i/pay_1' }),
-    }));
+      create: expect.objectContaining({ subscriptionId: 'sub1', asaasPaymentId: 'pay_1', invoiceUrl: 'https://asaas.com/i/pay_1', netValue: 147.01 }),
+      update: { invoiceUrl: 'https://asaas.com/i/pay_1', netValue: 147.01 },
+    });
     expect(result).toEqual({ subscription: expect.anything(), checkoutUrl: 'https://asaas.com/i/pay_1' });
+  });
+
+  it('Asaas sem netValue no pagamento: grava null (nunca estima a taxa)', async () => {
+    const { service, prisma, asaas } = build();
+    asaas.listPaymentsBySubscription.mockResolvedValue([{ id: 'pay_1', value: 149, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' }]);
+    await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+    expect(prisma.gatewayPayment.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ netValue: null }),
+      update: { invoiceUrl: 'https://asaas.com/i/pay_1', netValue: null },
+    }));
   });
 
   it('aluno que já tem CPF/customer salvos: reusa os dois, não grava de novo nem exige CPF no corpo', async () => {
@@ -408,20 +422,56 @@ describe('SubscriptionsService.listGatewayPayments', () => {
     }));
   });
 
-  it('a seleção nunca inclui gatewaySubscriptionId nem dado do CoachContract (walletId/%)', async () => {
+  it('a seleção nunca inclui gatewaySubscriptionId nem walletId (o % da assinatura entra — decisão do dono)', async () => {
     const { service, prisma } = build();
     await service.listGatewayPayments('coach-1');
     const call = prisma.gatewayPayment.findMany.mock.calls[0][0];
-    expect(call.select).not.toHaveProperty('gatewaySubscriptionId');
+    expect(JSON.stringify(call.select)).not.toContain('gatewaySubscriptionId');
     expect(JSON.stringify(call.select)).not.toContain('walletId');
-    expect(JSON.stringify(call.select)).not.toContain('platformFeePercent');
+    expect(call.select.subscription.select.platformFeePercent).toBe(true);
   });
 
-  it('devolve a lista tal como o prisma resolve', async () => {
-    const rows = [{ id: 'pay1', status: 'paid' }];
+  it('devolve cada cobrança com a divisão real, sem expor netValue/% soltos', async () => {
     const { service, prisma } = build();
-    prisma.gatewayPayment.findMany.mockResolvedValue(rows);
-    await expect(service.listGatewayPayments('coach-1')).resolves.toBe(rows);
+    prisma.gatewayPayment.findMany.mockResolvedValue([{
+      id: 'pay1', status: 'paid', amount: 99, netValue: 97.01,
+      subscription: { platformFeePercent: 10, student: { id: 's1', user: { name: 'Ana' } }, plan: { name: 'Core' } },
+    }]);
+    const [row] = await service.listGatewayPayments('coach-1');
+    expect(row).toEqual({
+      id: 'pay1', status: 'paid', amount: 99,
+      subscription: { student: { id: 's1', user: { name: 'Ana' } }, plan: { name: 'Core' } },
+      breakdown: { gross: 99, gatewayFee: 1.99, netValue: 97.01, platformFeePercent: 10, platformFee: 9.7, coachNet: 87.31 },
+    });
+  });
+});
+
+describe('SubscriptionsService.getMonthlyBreakdown', () => {
+  it('soma só as pagas no mês corrente dos alunos do coach e traz o % atual do contrato', async () => {
+    const { service, prisma } = build();
+    prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: 15 });
+    prisma.gatewayPayment.findMany.mockResolvedValue([
+      { amount: 99, netValue: 97.01, subscription: { platformFeePercent: 10 } },
+      { amount: 99, netValue: null, subscription: { platformFeePercent: 10 } },
+    ]);
+
+    const result = await service.getMonthlyBreakdown('coach-1');
+
+    const where = prisma.gatewayPayment.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('paid');
+    expect(where.subscription).toEqual({ student: { coachId: 'coach-1' } });
+    expect(where.paidAt.gte.getDate()).toBe(1);
+    expect(where.paidAt.lt > where.paidAt.gte).toBe(true);
+    expect(prisma.coachContract.findUnique).toHaveBeenCalledWith({ where: { coachId: 'coach-1' }, select: { platformFeePercent: true } });
+    expect(result).toEqual({
+      currentPlatformFeePercent: 15,
+      month: { count: 2, gross: 198, gatewayFee: 1.99, platformFee: 9.7, coachNet: 87.31, pendingBreakdown: 1 },
+    });
+  });
+
+  it('sem contrato cadastrado: % atual null (não finge 0% combinado)', async () => {
+    const { service } = build();
+    await expect(service.getMonthlyBreakdown('coach-1')).resolves.toMatchObject({ currentPlatformFeePercent: null });
   });
 });
 
