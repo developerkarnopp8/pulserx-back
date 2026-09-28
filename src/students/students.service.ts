@@ -25,6 +25,17 @@ const STUDENT_SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
+/** Mesmo formato "seguro" de `SUBSCRIPTION_VIEW` em subscriptions.service.ts — nunca gateway/gatewaySubscriptionId. */
+const STUDENT_SUBSCRIPTION_SELECT = {
+  id: true,
+  status: true,
+  startedAt: true,
+  renewsAt: true,
+  canceledAt: true,
+  trialEndsAt: true,
+  plan: { select: { id: true, name: true, priceCents: true, categories: true, isFree: true } },
+} as const;
+
 @Injectable()
 export class StudentsService {
   constructor(private prisma: PrismaService) {}
@@ -56,6 +67,7 @@ export class StudentsService {
       select: {
         ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
+        subscription: { select: STUDENT_SUBSCRIPTION_SELECT },
       },
       orderBy: { createdAt: 'desc' },
     });
