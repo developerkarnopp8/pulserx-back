@@ -428,7 +428,6 @@ describe('SubscriptionsService.listGatewayPayments', () => {
 describe('SubscriptionsService.getFinancialSummary', () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const beforeThisMonth = new Date(startOfMonth.getTime() - 40 * 86_400_000); // ~40 dias antes do mês começar
   const withinThisMonth = new Date(startOfMonth.getTime() + 5 * 86_400_000);  // dia 6 do mês corrente
 
