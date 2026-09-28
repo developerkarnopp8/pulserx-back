@@ -25,6 +25,13 @@ export class SubscriptionsController {
     return this.service.getMine(req.user);
   }
 
+  @Roles('athlete')
+  @Get('subscriptions/me/payments')
+  @ApiOperation({ summary: 'Histórico real das próprias cobranças (Asaas)' })
+  listMyPayments(@Request() req: any) {
+    return this.service.listMyPayments(req.user);
+  }
+
   // Limite próprio, mais apertado que o geral da API (30/min): cada chamada aqui pode disparar
   // requisições reais pro gateway (Asaas) — cria cliente/assinatura de verdade e tem custo/cota.
   // Reduz também a janela de exploração de retries acidentais duplicando assinatura no gateway.

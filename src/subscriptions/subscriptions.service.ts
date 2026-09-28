@@ -366,4 +366,27 @@ export class SubscriptionsService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  /**
+   * Histórico real de cobranças (Asaas) do PRÓPRIO aluno logado — pra tela "Minha Assinatura".
+   * Sempre resolve o studentId a partir do userId do token (nunca aceita um id vindo do body/URL).
+   */
+  async listMyPayments(user: AuthUser) {
+    const student = await this.prisma.student.findFirst({ where: { userId: user.id }, select: { id: true } });
+    if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
+
+    return this.prisma.gatewayPayment.findMany({
+      where: { subscription: { studentId: student.id } },
+      select: {
+        id: true,
+        status: true,
+        amount: true,
+        dueDate: true,
+        paidAt: true,
+        invoiceUrl: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 }
