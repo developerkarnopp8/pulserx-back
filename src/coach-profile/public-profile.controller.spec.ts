@@ -4,8 +4,9 @@ import { CoachProfileService } from './coach-profile.service';
 
 function build() {
   const service = { getPublicBySlug: jest.fn(), createLead: jest.fn() };
-  const controller = new PublicProfileController(service as unknown as CoachProfileService);
-  return { controller, service };
+  const signupService = { signup: jest.fn() };
+  const controller = new PublicProfileController(service as unknown as CoachProfileService, signupService as never);
+  return { controller, service, signupService };
 }
 
 describe('PublicProfileController — sem guard (rota pública)', () => {
@@ -28,3 +29,19 @@ describe('PublicProfileController — delegação', () => {
     expect(service.createLead).toHaveBeenCalledWith('luan', dto);
   });
 });
+
+describe('PublicProfileController — inscrição', () => {
+  it('signup repassa slug + dto (o coach vem do slug, nunca do corpo)', () => {
+    const { controller, signupService } = build();
+    const dto = { name: 'Ana', email: 'ana@example.com', password: 'senha-forte', planId: 'p1', acceptTerms: true };
+    controller.signup('luan', dto as never);
+    expect(signupService.signup).toHaveBeenCalledWith('luan', dto);
+  });
+
+  it('signup tem limite próprio de 5/min por IP', () => {
+    const limit = Reflect.getMetadata('THROTTLER:LIMITdefault', PublicProfileController.prototype.signup);
+    const ttl = Reflect.getMetadata('THROTTLER:TTLdefault', PublicProfileController.prototype.signup);
+    expect([limit, ttl]).toEqual([5, 60_000]);
+  });
+});
+

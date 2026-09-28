@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Body, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Request, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('users')
@@ -9,11 +8,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Criar novo usuário' })
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
-  }
+  // Não existe cadastro público de usuário (decisão do dono, 2026-09-28): coach é criado só pelo
+  // admin (POST /admin/coaches) e aluno pelo coach ou pela inscrição na landing do coach
+  // (POST /public/coaches/:slug/signup). O antigo POST /users deixava qualquer um virar coach.
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
