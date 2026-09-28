@@ -1,10 +1,34 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
-  IsBoolean, IsEmail, IsInt, IsNumber, IsOptional, IsString, IsUrl, Matches,
-  Max, MaxLength, Min, MinLength,
+  ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsInt, IsNumber, IsOptional, IsString, IsUrl, Matches,
+  Max, MaxLength, Min, MinLength, ValidateNested,
 } from 'class-validator';
 
 const SLUG_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** Card do bloco "Como funciona o acompanhamento". Vazio = texto padrão daquela posição (o front mantém a ordem). */
+export class PillarDto {
+  @ApiProperty() @IsString() @MaxLength(60) title!: string;
+  @ApiProperty() @IsString() @MaxLength(200) text!: string;
+}
+
+/** Textos editáveis da landing (todos opcionais — ausente = padrão do template). */
+export class PageCopyDto {
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) howItWorksTitle?: string;
+
+  @ApiPropertyOptional({ type: [PillarDto], maxItems: 4 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  @Type(() => PillarDto)
+  pillars?: PillarDto[];
+
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) plansTitle?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) finalTitle?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) finalCtaLabel?: string;
+}
 
 export class UpdateCoachProfileDto {
   @ApiProperty({ description: 'Identificador da URL pública (/c/:slug) — kebab-case, ex.: "luan-treinador"' })
@@ -82,6 +106,37 @@ export class UpdateCoachProfileDto {
   @IsOptional()
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   videoUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Dias de garantia oferecidos pelo coach (além do arrependimento legal de 7 dias)' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  guaranteeDays?: number;
+
+  @ApiPropertyOptional({ description: 'Como funciona a garantia (ex.: "devolvo 100% se não gostar")' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  guaranteeText?: string;
+
+  @ApiPropertyOptional({ description: 'E-mail de suporte ao aluno' })
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(200)
+  supportEmail?: string;
+
+  @ApiPropertyOptional({ description: 'Horário de atendimento (ex.: "Seg a sex, 8h às 18h")' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  supportHours?: string;
+
+  @ApiPropertyOptional({ type: PageCopyDto, description: 'Textos editáveis da página; campo ausente usa o texto padrão' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PageCopyDto)
+  pageCopy?: PageCopyDto;
 }
 
 export class PublishCoachProfileDto {

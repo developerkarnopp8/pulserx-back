@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { CoachProfileService } from './coach-profile.service';
+import { CoachProfileService, pickPageCopy } from './coach-profile.service';
 
 function build() {
   const prisma: any = {
@@ -61,6 +61,39 @@ describe('CoachProfileService.upsert', () => {
 
     await expect(service.upsert('coach-1', { slug: 'luan' } as never)).rejects.toThrow(ConflictException);
     expect(prisma.coachProfile.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('CoachProfileService.upsert — garantia, suporte e textos da página', () => {
+  it('grava garantia/suporte e só os campos conhecidos dos textos (máx. 4 cards)', async () => {
+    const { service, prisma } = build();
+    prisma.coachProfile.findUnique.mockResolvedValue(null);
+    prisma.coachProfile.upsert.mockResolvedValue({ id: 'p1' });
+    const pillars = Array.from({ length: 5 }, (_, i) => ({ title: `T${i}`, text: `Texto ${i}`, extra: 'x' }));
+
+    await service.upsert('coach-1', {
+      slug: 'luan', guaranteeDays: 30, guaranteeText: 'Devolvo 100%', supportEmail: 'suporte@example.com',
+      supportHours: 'Seg a sex', pageCopy: { howItWorksTitle: 'Como funciona', plansTitle: 'Planos', finalTitle: 'Bora', finalCtaLabel: 'Quero', pillars, lixo: 'x' },
+    } as never);
+
+    const data = prisma.coachProfile.upsert.mock.calls[0][0].update;
+    expect(data).toMatchObject({ guaranteeDays: 30, guaranteeText: 'Devolvo 100%', supportEmail: 'suporte@example.com', supportHours: 'Seg a sex' });
+    expect(data.pageCopy).toEqual({
+      howItWorksTitle: 'Como funciona', plansTitle: 'Planos', finalTitle: 'Bora', finalCtaLabel: 'Quero',
+      pillars: pillars.slice(0, 4).map(({ title, text }) => ({ title, text })),
+    });
+  });
+
+  it('sem textos da página: não mexe no que já estava salvo', async () => {
+    const { service, prisma } = build();
+    prisma.coachProfile.findUnique.mockResolvedValue(null);
+    prisma.coachProfile.upsert.mockResolvedValue({ id: 'p1' });
+    await service.upsert('coach-1', { slug: 'luan' } as never);
+    expect(prisma.coachProfile.upsert.mock.calls[0][0].update.pageCopy).toBeUndefined();
+  });
+
+  it('pickPageCopy ignora valores que não são texto e pillars que não é lista', () => {
+    expect(pickPageCopy({ plansTitle: 123, pillars: 'x' } as never)).toEqual({});
   });
 });
 

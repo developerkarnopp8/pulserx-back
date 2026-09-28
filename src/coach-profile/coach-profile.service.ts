@@ -1,14 +1,27 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from '../common/cloudinary.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../common/email.service';
 import { escapeHtml } from '../common/escape-html';
-import { UpdateCoachProfileDto, CreateLeadDto, UpsertTestimonialDto, UpsertFaqItemDto } from './dto/coach-profile.dto';
+import { UpdateCoachProfileDto, CreateLeadDto, UpsertTestimonialDto, UpsertFaqItemDto, PageCopyDto } from './dto/coach-profile.dto';
 
 const PUBLIC_PLAN_SELECT = {
   id: true, name: true, description: true, priceCents: true, categories: true, isFree: true,
 } as const;
+
+/** Copia só os campos conhecidos dos textos da página (defesa em profundidade além do ValidationPipe). */
+export function pickPageCopy(copy: PageCopyDto): Prisma.InputJsonObject {
+  const out: Record<string, Prisma.InputJsonValue> = {};
+  for (const key of ['howItWorksTitle', 'plansTitle', 'finalTitle', 'finalCtaLabel'] as const) {
+    if (typeof copy[key] === 'string') out[key] = copy[key]!;
+  }
+  if (Array.isArray(copy.pillars)) {
+    out.pillars = copy.pillars.slice(0, 4).map(p => ({ title: p.title, text: p.text }));
+  }
+  return out;
+}
 
 @Injectable()
 export class CoachProfileService {
@@ -45,6 +58,12 @@ export class CoachProfileService {
       completionRate: dto.completionRate,
       whatsappNumber: dto.whatsappNumber,
       videoUrl: dto.videoUrl,
+      guaranteeDays: dto.guaranteeDays,
+      guaranteeText: dto.guaranteeText,
+      supportEmail: dto.supportEmail,
+      supportHours: dto.supportHours,
+      // Só os campos do DTO (já validados/whitelist) — nunca o objeto cru do corpo.
+      pageCopy: dto.pageCopy ? pickPageCopy(dto.pageCopy) : undefined,
     };
 
     return this.prisma.coachProfile.upsert({
@@ -154,6 +173,7 @@ export class CoachProfileService {
         bio: true, bannerUrl: true, photoUrl: true, headline: true, subheadline: true, quote: true,
         achievementBadge: true, yearsExperience: true, athletesCount: true, npsScore: true,
         completionRate: true, whatsappNumber: true, videoUrl: true, published: true,
+        guaranteeDays: true, guaranteeText: true, supportEmail: true, supportHours: true, pageCopy: true,
         coach: { select: { id: true, name: true } },
       },
     });

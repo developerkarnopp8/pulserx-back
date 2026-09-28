@@ -572,6 +572,15 @@ model CoachProfile {
   whatsappNumber   String?
   /// Vídeo de demonstração (YouTube) — mesmo componente de embed já usado nos exercícios.
   videoUrl         String?
+  /// Garantia OFERECIDA PELO COACH, além do arrependimento legal de 7 dias (CDC). Null = sem garantia extra.
+  guaranteeDays    Int?
+  guaranteeText    String?
+  /// Suporte ao aluno (além do WhatsApp).
+  supportEmail     String?
+  supportHours     String?
+  /// Textos editáveis da página (títulos, cards do "Como funciona", chamada final). Formato validado
+  /// no DTO (PageCopyDto); campo ausente = texto padrão do template.
+  pageCopy         Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
