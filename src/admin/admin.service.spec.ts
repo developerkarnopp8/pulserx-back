@@ -84,8 +84,8 @@ describe('AdminService', () => {
 
       await service.listCoaches();
 
-      expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-1' } });
-      expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-2' } });
+      expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-1', unlinkedAt: null } });
+      expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-2', unlinkedAt: null } });
       expect(prisma.gatewayPayment.aggregate).toHaveBeenCalledWith(expect.objectContaining({
         where: { status: 'paid', subscription: { student: { coachId: 'coach-1' } } },
       }));

@@ -1,6 +1,7 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MessagesGateway } from './messages.gateway';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 const userSelect = { id: true, name: true, role: true };
 
@@ -61,6 +62,18 @@ export class MessagesService {
   }
 
   async send(fromId: string, toId: string, content: string, isSystem = false) {
+    // Conversa só entre o aluno e o coach dele, com vínculo ativo. Antes qualquer usuário escrevia para qualquer id
+    // (e o coach seguia escrevendo — e o tempo real entregando — ao aluno que desvinculou ou excluiu a conta).
+    const vinculo = await this.prisma.student.count({
+      where: {
+        ...ACTIVE_STUDENT,
+        OR: [
+          { userId: fromId, coachId: toId },
+          { userId: toId, coachId: fromId },
+        ],
+      },
+    });
+    if (!vinculo) throw new NotFoundException('Destinatário não encontrado.');
     const message = await this.prisma.message.create({
       data: { fromId, toId, content, isSystem },
       include: {

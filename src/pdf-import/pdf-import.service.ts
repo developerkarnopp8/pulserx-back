@@ -11,6 +11,7 @@ import { AnthropicExtractionService } from './anthropic-extraction.service';
 import { ImportPdfDto } from './dto/import-pdf.dto';
 import { ExtractedPlanDto, ExtractedWeekDto } from './dto/extracted-plan.dto';
 import { normalizeToMonday } from '../training-plans/training-plans.service';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 const SISTEMA_INDISPONIVEL_MSG =
   'Erro no sistema de importação — nossa equipe já foi avisada. Tente novamente mais tarde ou entre em contato com o suporte.';
@@ -27,7 +28,7 @@ export class PdfImportService {
 
   async importFromPdf(coachId: string, dto: ImportPdfDto, pdfBuffer: Buffer): Promise<{ id: string }> {
     const student = await this.prisma.student.findUnique({
-      where: { id: dto.studentId },
+      where: { id: dto.studentId, ...ACTIVE_STUDENT },
       select: { userId: true, coachId: true },
     });
     if (!student) throw new NotFoundException('Aluno não encontrado');

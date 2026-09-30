@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { PlanScope, TrainingCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -43,10 +44,11 @@ export class PlanAccessService {
         scope: true,
         category: true,
         published: true,
-        student: { select: { id: true, userId: true } },
+        student: { select: { id: true, userId: true, unlinkedAt: true } },
       },
     });
-    if (!plan) throw new NotFoundException('Plano não encontrado');
+    // Plano individual de aluno desvinculado (ou com a conta excluída) some para todos, como o próprio aluno.
+    if (!plan || plan.student?.unlinkedAt) throw new NotFoundException('Plano não encontrado');
 
     const base = { planId: plan.id, coachId: plan.coachId, scope: plan.scope, category: plan.category };
     const denied = () => new ForbiddenException('Você não tem acesso a este plano.');
@@ -72,7 +74,7 @@ export class PlanAccessService {
     // SHARED: pertence ao coach; o aluno entra pelo vínculo com o coach + assinatura.
     if (!plan.published) throw denied();
     const student = await this.prisma.student.findFirst({
-      where: { userId: user.id, coachId: plan.coachId },
+      where: { userId: user.id, coachId: plan.coachId, ...ACTIVE_STUDENT },
       select: { id: true },
     });
     if (!student) throw denied();

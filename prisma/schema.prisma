@@ -72,6 +72,8 @@ model User {
   /// Consentimento para dados de saúde (LGPD Art. 11): null = não respondeu; false = não/retirou. Quando mudou por último.
   healthConsent   Boolean?
   healthConsentAt DateTime?
+  /// Conta anonimizada a pedido do titular (LGPD Art. 18): nome/e-mail trocados, senha inutilizável, token recusado.
+  deletedAt       DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -115,6 +117,9 @@ model Student {
   cpf               String?  @unique
   /// Id do "customer" do aluno no Asaas — criado uma vez, reusado entre trocas de plano.
   asaasCustomerId   String?
+  /// Vínculo encerrado pelo coach ("desvincular") ou pela exclusão da conta: some das telas do coach e o aluno
+  /// perde o acesso ao app. Os dados só são apagados/anonimizados a pedido do aluno (ou do admin).
+  unlinkedAt        DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

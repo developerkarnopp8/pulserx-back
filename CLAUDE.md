@@ -54,6 +54,34 @@
 > cruzado com o banco. security-analyst: 0 Crítico/Alto; **Médio em aberto** — pulos com "Lesão"/observação gravados antes deste PR só são
 > limpos quando o aluno responde "não" (até lá o coach ainda os vê); Baixo aceito — corrida entre pulo com lesão e retirada simultânea (retirar
 > de novo limpa). **Produção:** schema novo (2 colunas + 1 valor de enum) entra na pendência de estratégia de schema de produção.
+>
+> **Decisão do dono sobre o Médio acima (2026-09-30): opção 2 — fica como está** (o dado antigo só some quando o aluno responde "não").
+
+> **LGPD item 3 — desvincular e excluir conta (decisões do dono, 2026-09-30, branch `feat-lgpd-exclusao-termo-coach`):** exclusão pelo
+> **próprio aluno** (Perfil, com a senha) **e pelo admin** (pedido por e-mail); **anonimizar guardando só o fiscal**; o "remover aluno" do coach
+> virou **"desvincular"** (não apaga a conta). Implementação:
+> - `Student.unlinkedAt` (vínculo encerrado) e `User.deletedAt` (conta anonimizada). **Toda consulta de aluno filtra `ACTIVE_STUDENT`**
+>   (`common/student-scope.ts`) ou declara `inclui desvinculados` no comentário — `student-scope.spec.ts` varre o código e falha se alguém
+>   esquecer. Plano individual de ex-aluno = 404 no `PlanAccessService`.
+> - `JwtStrategy.validate` agora consulta o banco a cada requisição: conta excluída → 401 "Sessão encerrada" (antes o token valia 7 dias);
+>   aluno desvinculado → `unlinked` e o `JwtAuthGuard` responde 403 `UNLINKED` fora das rotas `@AllowUnlinked()` (só `POST /account/delete`).
+> - `SubscriptionsService.endSubscription`: **cancela no Asaas antes** (falhou = nada muda) e marca CANCELED mantendo assinatura e cobranças.
+>   Usado por desvincular, excluir conta e `DELETE /students/:id/subscription`. **Bugs de cobrança órfã corrigidos (existiam no main):** remover
+>   aluno apagava a conta sem cancelar no Asaas (e levava o histórico fiscal junto); remover assinatura idem; trocar o plano à mão de quem paga
+>   pelo app deixava o Asaas cobrando o antigo (agora 409); o checkout não pede mais para cancelar de novo uma assinatura já cancelada.
+> - `DELETE /students/:id` = desvincular. `POST /account/delete {password}` (aluno, 5/15 min). Admin: `GET /admin/athletes?email=` (e-mail
+>   exato) e `POST /admin/athletes/:id/anonymize`. Anonimizar (`account/account.service.ts`) apaga treinos/logs/pulos/hidratação/calorias/PRs/
+>   movimentos próprios/planos individuais, mensagens, notificações dele e as do coach que citam nome/e-mail/plano dele, leads com o mesmo
+>   e-mail; limpa CPF/id do Asaas; troca nome/e-mail (`Aluno removido`, `removido-<id>@anonimo.invalid`) e inutiliza a senha. Assinatura,
+>   `GatewayPayment` e `Payment` ficam.
+> - **`POST /messages` passou a exigir vínculo ativo aluno↔coach** (antes qualquer usuário escrevia para qualquer id, e o coach seguia
+>   escrevendo ao ex-aluno).
+> - Validação: 824 testes, 100%; mutação 22/22; ataque ao vivo 48/48 cruzado com o banco (+ regressão do item 1+2 45/45). **Erro meu no
+>   caminho:** a 1ª rodada do ataque estourou o limite de login (5/15 min) e dois casos "passaram" com 401 por falta de sessão — o script agora
+>   aborta sem token e cria alunos pela inscrição pública. security-analyst: 0 Crítico/Alto/Médio; Baixos aceitos: leads apagados por e-mail sem
+>   confirmação de e-mail (fecha com a confirmação), notificações de homônimo do mesmo coach, cadastro do aluno continua no Asaas (registro de
+>   pagamento), socket aberto não cai (nada mais chega). Limitação: ex-aluno desvinculado não pode ser recadastrado com o mesmo e-mail.
+> - **Produção:** mais 2 colunas (`users.deletedAt`, `students.unlinkedAt`) na pendência de schema.
 
 ## Visão Geral
 

@@ -59,6 +59,16 @@ describe('PlanAccessService', () => {
       );
     });
 
+    it('plano individual de aluno desvinculado (ou com a conta excluída): 404 para o coach e para o aluno', async () => {
+      const exAluno = { ...individual, student: { ...individual.student, unlinkedAt: new Date() } };
+      prisma.trainingPlan.findUnique.mockResolvedValue(exAluno);
+      await expect(service.resolveByPlanId('plan-i', coach)).rejects.toThrow(NotFoundException);
+      await expect(service.resolveByPlanId('plan-i', atleta)).rejects.toThrow(NotFoundException);
+      expect(prisma.trainingPlan.findUnique.mock.calls[0][0].select.student).toEqual({
+        select: { id: true, userId: true, unlinkedAt: true },
+      });
+    });
+
     it('IDOR: outro coach é barrado em plano individual e em compartilhado', async () => {
       prisma.trainingPlan.findUnique.mockResolvedValueOnce(individual);
       await expect(service.resolveByPlanId('plan-i', outroCoach)).rejects.toThrow(ForbiddenException);
@@ -103,7 +113,7 @@ describe('PlanAccessService', () => {
         expect.objectContaining({ isCoach: false, studentId: 'student-1', athleteId: 'athlete-1', coachId: 'coach-1' }),
       );
       expect(prisma.student.findFirst).toHaveBeenCalledWith({
-        where: { userId: 'athlete-1', coachId: 'coach-1' },
+        where: { userId: 'athlete-1', coachId: 'coach-1', unlinkedAt: null },
         select: { id: true },
       });
       expect(subscriptionAccess.assertCanAccessCategory).toHaveBeenCalledWith('student-1', 'CORE');

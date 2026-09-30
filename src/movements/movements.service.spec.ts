@@ -62,7 +62,7 @@ describe('MovementsService.findAvailable — quem vê o quê', () => {
   it('atleta: globais + os próprios + os do coach dele', async () => {
     const { service, prisma } = build({ coachId: 'coach-9' });
     await service.findAvailable({ id: 'athlete-1', role: 'athlete' });
-    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'athlete-1' }, select: { coachId: true } });
+    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'athlete-1', unlinkedAt: null }, select: { coachId: true } });
     expect(prisma.movement.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { OR: [GLOBAL, { athleteId: 'athlete-1' }, { coachId: 'coach-9' }] },
     }));

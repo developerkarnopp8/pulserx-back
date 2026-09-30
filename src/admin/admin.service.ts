@@ -3,6 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateStrongPassword } from '../common/generate-strong-password';
 import { CreateCoachDto } from './dto/admin.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 @Injectable()
 export class AdminService {
@@ -24,7 +25,7 @@ export class AdminService {
     return Promise.all(coaches.map(async coach => {
       const [contract, studentCount, paidAgg] = await Promise.all([
         this.prisma.coachContract.findUnique({ where: { coachId: coach.id }, select: { platformFeePercent: true } }),
-        this.prisma.student.count({ where: { coachId: coach.id } }),
+        this.prisma.student.count({ where: { coachId: coach.id, ...ACTIVE_STUDENT } }),
         this.prisma.gatewayPayment.aggregate({
           where: { status: 'paid', subscription: { student: { coachId: coach.id } } },
           _sum: { amount: true },

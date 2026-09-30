@@ -5,11 +5,14 @@ import { PrismaService } from '../prisma/prisma.service';
 
 describe('MessagesService.send', () => {
   let service: MessagesService;
-  let prisma: { message: { create: jest.Mock } };
+  let prisma: { message: { create: jest.Mock }; student: { count: jest.Mock } };
   let gateway: { emitToUser: jest.Mock };
 
   beforeEach(async () => {
-    prisma = { message: { create: jest.fn() } };
+    prisma = {
+      message: { create: jest.fn() },
+      student: { count: jest.fn().mockResolvedValue(1) },
+    };
     gateway = { emitToUser: jest.fn() };
 
     const module = await Test.createTestingModule({
@@ -41,6 +44,28 @@ describe('MessagesService.send', () => {
     expect(prisma.message.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: { fromId: 'athlete-1', toId: 'coach-1', content: 'pulei o treino', isSystem: true } }),
     );
+  });
+
+  it('só entre aluno e o coach dele, com vínculo ativo (nos dois sentidos)', async () => {
+    prisma.message.create.mockResolvedValue({ id: '9' });
+    await service.send('coach-1', 'athlete-1', 'oi');
+    expect(prisma.student.count).toHaveBeenCalledWith({
+      where: {
+        unlinkedAt: null,
+        OR: [
+          { userId: 'coach-1', coachId: 'athlete-1' },
+          { userId: 'athlete-1', coachId: 'coach-1' },
+        ],
+      },
+    });
+  });
+
+  it('sem vínculo ativo (outro coach, aluno de outro, ex-aluno desvinculado ou conta excluída): 404, nada gravado nem emitido', async () => {
+    prisma.student.count.mockResolvedValue(0);
+
+    await expect(service.send('coach-1', 'athlete-9', 'oi')).rejects.toThrow('Destinatário não encontrado.');
+    expect(prisma.message.create).not.toHaveBeenCalled();
+    expect(gateway.emitToUser).not.toHaveBeenCalled();
   });
 
   it('emite a mensagem em tempo real pro destinatario', async () => {

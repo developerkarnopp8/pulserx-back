@@ -13,7 +13,8 @@ export class AuthService {
 
   async validateUser(email: string, password: string): Promise<any> {
     const user = await this.usersService.findByEmail(email);
-    if (!user) {
+    // Conta excluída (anonimizada) nunca entra, mesmo que alguém descubra o e-mail trocado.
+    if (!user || user.deletedAt) {
       return null;
     }
 

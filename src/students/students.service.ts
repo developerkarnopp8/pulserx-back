@@ -4,6 +4,8 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStudentDto, UpdateStudentDto } from './dto/create-student.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 type AuthUser = { id: string; role: string };
 
@@ -38,7 +40,10 @@ const STUDENT_SUBSCRIPTION_SELECT = {
 
 @Injectable()
 export class StudentsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private subscriptions: SubscriptionsService,
+  ) {}
 
   /** Coach dono do aluno, ou o próprio aluno — ninguém mais. */
   private assertCanAccess(student: { coachId: string; userId: string }, user: AuthUser) {
@@ -51,7 +56,7 @@ export class StudentsService {
 
   async findByUserId(userId: string) {
     const student = await this.prisma.student.findFirst({
-      where: { userId },
+      where: { userId, ...ACTIVE_STUDENT },
       select: {
         ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
@@ -63,7 +68,7 @@ export class StudentsService {
 
   async findAll(coachId: string) {
     const students = await this.prisma.student.findMany({
-      where: { coachId },
+      where: { coachId, ...ACTIVE_STUDENT },
       select: {
         ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
@@ -126,7 +131,7 @@ export class StudentsService {
 
   async findOne(id: string, user: AuthUser) {
     const student = await this.prisma.student.findUnique({
-      where: { id },
+      where: { id, ...ACTIVE_STUDENT },
       select: {
         ...STUDENT_SAFE_SELECT,
         user: { select: { id: true, name: true, email: true, role: true } },
@@ -161,7 +166,7 @@ export class StudentsService {
 
   /** Busca simples pro coach dono validar antes de escrever — sem cross-check de role. */
   private async getOwnedByCoach(id: string, coachId: string) {
-    const student = await this.prisma.student.findUnique({ where: { id } });
+    const student = await this.prisma.student.findUnique({ where: { id, ...ACTIVE_STUDENT } });
     if (!student) throw new NotFoundException('Aluno não encontrado');
     if (student.coachId !== coachId) {
       throw new ForbiddenException('Você não tem acesso a este aluno.');
@@ -178,10 +183,20 @@ export class StudentsService {
     });
   }
 
-  async remove(id: string, coachId: string) {
+  /**
+   * "Desvincular" (decisão do dono, 2026-09-30): o coach encerra o vínculo — cancela a cobrança no Asaas, o aluno some
+   * da lista dele e perde o acesso ao app. A conta e os dados NÃO são apagados: isso só a pedido do próprio aluno ou do
+   * admin (LGPD Art. 18). Antes apagava a conta inteira — a cobrança seguia no Asaas e o histórico fiscal sumia.
+   */
+  async unlink(id: string, coachId: string): Promise<{ unlinked: boolean }> {
     const student = await this.getOwnedByCoach(id, coachId);
-    // Deleting the User cascades to Student (onDelete: Cascade in schema)
-    return this.prisma.user.delete({ where: { id: student.userId } });
+    // Asaas primeiro: se o cancelamento falhar, o vínculo continua (nunca "desvinculado" com o gateway cobrando).
+    await this.subscriptions.endSubscription(student.id);
+    const { count } = await this.prisma.student.updateMany({
+      where: { id: student.id, ...ACTIVE_STUDENT },
+      data: { unlinkedAt: new Date() },
+    });
+    return { unlinked: count > 0 };
   }
 
   async getCurrentPlan(studentId: string, user: AuthUser) {

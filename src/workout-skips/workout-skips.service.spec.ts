@@ -391,7 +391,7 @@ describe('WorkoutSkipsService.getPendingCountByStudent', () => {
 
     const result = await service.getPendingCountByStudent('coach-1');
 
-    expect(prisma.student.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1' } }));
+    expect(prisma.student.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1', unlinkedAt: null } }));
     expect(result).toEqual([{ studentId: 'student-2', count: 1 }]);
   });
 });

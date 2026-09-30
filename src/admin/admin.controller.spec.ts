@@ -25,12 +25,14 @@ function build() {
   };
   const contracts = { get: jest.fn(), setFee: jest.fn() };
   const platformSettings = { get: jest.fn(), setEnforcement: jest.fn() };
+  const account = { findAthleteByEmail: jest.fn().mockResolvedValue({ id: 'u1' }), anonymize: jest.fn() };
   const controller = new AdminController(
     service as unknown as AdminService,
     contracts as unknown as CoachContractsService,
     platformSettings as unknown as PlatformSettingsService,
+    account as never,
   );
-  return { controller, service, contracts, platformSettings };
+  return { controller, service, contracts, platformSettings, account };
 }
 
 describe('AdminController — delegação', () => {
@@ -80,5 +82,15 @@ describe('AdminController — delegação', () => {
 
     controller.setPlatformSettings({ enforceSubscriptionAccess: true, confirmLockout: true } as never);
     expect(platformSettings.setEnforcement).toHaveBeenCalledWith(true, true);
+  });
+});
+
+describe('AdminController — exclusão de conta de aluno (LGPD Art. 18)', () => {
+  it('acha o aluno pelo e-mail e anonimiza pelo id, registrando que foi o admin', async () => {
+    const { controller, account } = build();
+    await expect(controller.findAthlete({ email: 'ana@example.com' })).resolves.toEqual({ id: 'u1' });
+    expect(account.findAthleteByEmail).toHaveBeenCalledWith('ana@example.com');
+    await controller.anonymizeAthlete('u1');
+    expect(account.anonymize).toHaveBeenCalledWith('u1', 'admin');
   });
 });
