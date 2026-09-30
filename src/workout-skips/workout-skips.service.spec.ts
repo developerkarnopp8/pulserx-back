@@ -21,6 +21,7 @@ describe('WorkoutSkipsService.create', () => {
       exercise: { findUnique: jest.fn() },
       session: { findUnique: jest.fn() },
       workoutSkip: { create: jest.fn() },
+      user: { findUnique: jest.fn().mockResolvedValue({ healthConsent: true }) },
     };
     planAccess = { resolveByPlanId: jest.fn().mockResolvedValue(access) };
     messagesService = { send: jest.fn().mockResolvedValue({}) };
@@ -73,6 +74,76 @@ describe('WorkoutSkipsService.create', () => {
     expect(result).toEqual({ id: 'skip-1', exerciseId: 'ex-1', decision: 'Postponed' });
   });
 
+  it.each([
+    ['sem consentimento (false)', { healthConsent: false }],
+    ['nunca respondeu (null)', { healthConsent: null }],
+    ['conta não achada', null],
+  ])('lesão ou observação %s: 403 HEALTH_CONSENT_REQUIRED, nada gravado', async (_caso, conta) => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.user.findUnique.mockResolvedValue(conta);
+    for (const dto of [
+      { exerciseId: 'ex-1', reason: 'Injury', decision: 'Postponed' },
+      { exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed', note: 'joelho' },
+    ]) {
+      await expect(service.create(dto as any, athlete)).rejects.toMatchObject({
+        response: { code: 'HEALTH_CONSENT_REQUIRED' },
+      });
+    }
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'athlete-1' }, select: { healthConsent: true } });
+    expect(prisma.workoutSkip.create).not.toHaveBeenCalled();
+    expect(messagesService.send).not.toHaveBeenCalled();
+  });
+
+  it('com consentimento: lesão e observação passam e vão no texto ao coach', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+    await service.create({ exerciseId: 'ex-1', reason: 'Injury', decision: 'Abandoned', note: 'ombro' } as any, athlete);
+    expect(messagesService.send).toHaveBeenCalledWith(
+      'athlete-1', 'coach-1', 'Pulei "HSPU" — motivo: lesão/dor. não vai fazer. Nota: ombro', true,
+    );
+  });
+
+  it.each(['', '   '])('observação vazia (%j): vale como sem observação — não pede consentimento nem grava texto', async note => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.user.findUnique.mockResolvedValue({ healthConsent: false });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+    await service.create({ exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed', note } as any, athlete);
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.workoutSkip.create.mock.calls[0][0].data.note).toBeUndefined();
+    expect(messagesService.send).toHaveBeenCalledWith(
+      'athlete-1', 'coach-1', 'Pulei "HSPU" — motivo: sem tempo. vai fazer depois.', true,
+    );
+  });
+
+  it('observação com espaços nas pontas é gravada aparada', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+    await service.create({ exerciseId: 'ex-1', reason: 'Other', decision: 'Postponed', note: '  ombro  ' } as any, athlete);
+    expect(prisma.workoutSkip.create.mock.calls[0][0].data.note).toBe('ombro');
+  });
+
+  it('sem saúde (motivo comum, sem observação): nem consulta o consentimento', async () => {
+    prisma.exercise.findUnique.mockResolvedValue({
+      id: 'ex-1', name: 'HSPU',
+      session: { day: { week: { planId: 'plan-1' } } },
+    });
+    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
+    await service.create({ exerciseId: 'ex-1', reason: 'Later', decision: 'Postponed' } as any, athlete);
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
   it('notifica o coach quando o atleta pula um treino', async () => {
     prisma.exercise.findUnique.mockResolvedValue({
       id: 'ex-1', name: 'HSPU',
@@ -121,18 +192,6 @@ describe('WorkoutSkipsService.create', () => {
     expect(messagesService.send).toHaveBeenCalledWith(
       'athlete-1', 'coach-1', expect.stringContaining('não vai fazer. Nota: Dor no ombro'), true,
     );
-  });
-
-  it('motivo fora do mapa conhecido: usa o próprio valor cru na mensagem', async () => {
-    prisma.exercise.findUnique.mockResolvedValue({
-      id: 'ex-1', name: 'HSPU',
-      session: { day: { week: { planId: 'plan-1' } } },
-    });
-    prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-1' });
-
-    await service.create({ exerciseId: 'ex-1', reason: 'MotivoNovo', decision: 'Postponed' } as any, athlete);
-
-    expect(messagesService.send).toHaveBeenCalledWith('athlete-1', 'coach-1', expect.stringContaining('motivo: MotivoNovo'), true);
   });
 
   it('sem nota, a mensagem não tem o sufixo "Nota:"', async () => {

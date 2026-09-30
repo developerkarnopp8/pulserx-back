@@ -1,3 +1,4 @@
+import { ConsentsModule } from './consents/consents.module';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
@@ -58,6 +59,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     SubscriptionsModule,
     CoachProfileModule,
     WebhooksModule,
+    ConsentsModule,
   ],
   providers: [
     {

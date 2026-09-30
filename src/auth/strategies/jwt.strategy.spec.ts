@@ -16,7 +16,10 @@ describe('JwtStrategy', () => {
     const strategy = new JwtStrategy({} as never);
 
     await expect(strategy.validate({ sub: 'u1', email: 'ana@example.com', role: 'coach', name: 'Ana' })).resolves.toEqual({
-      id: 'u1', email: 'ana@example.com', role: 'coach', name: 'Ana',
+      id: 'u1', email: 'ana@example.com', role: 'coach', name: 'Ana', tv: null,
     });
+    await expect(
+      strategy.validate({ sub: 'u2', email: 'b@example.com', role: 'athlete', name: 'B', tv: '2026-09-30' }),
+    ).resolves.toMatchObject({ tv: '2026-09-30' });
   });
 });

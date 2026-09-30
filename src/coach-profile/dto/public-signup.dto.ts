@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { Equals, IsEmail, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 /** Inscrição do visitante na landing do coach: vira conta de aluno já vinculada a esse coach. */
 export class PublicSignupDto {
@@ -30,4 +30,13 @@ export class PublicSignupDto {
   @ApiProperty({ description: 'Aceite dos Termos de Uso e da Política de Privacidade — obrigatório' })
   @Equals(true, { message: 'É preciso aceitar os Termos de Uso e a Política de Privacidade.' })
   acceptTerms!: boolean;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Consentimento para dados de saúde (LGPD Art. 11) — opcional, caixa própria e desmarcada; ausente = não',
+  })
+  @IsOptional()
+  @IsBoolean()
+  healthConsent?: boolean;
 }

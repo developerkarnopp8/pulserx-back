@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 import { SkipReason, SkipDecision } from '@prisma/client';
 
 export class CreateWorkoutSkipDto {
@@ -13,9 +13,10 @@ export class CreateWorkoutSkipDto {
   @IsUUID()
   sessionId?: string;
 
-  @ApiProperty({ enum: SkipReason })
-  @IsEnum(SkipReason)
-  reason!: SkipReason;
+  // `Withheld` só o sistema grava (ao retirar o consentimento de saúde) — nunca vem do aluno.
+  @ApiProperty({ enum: ['NoTime', 'Injury', 'Later', 'Other'] })
+  @IsIn(['NoTime', 'Injury', 'Later', 'Other'])
+  reason!: Exclude<SkipReason, 'Withheld'>;
 
   @ApiProperty({ required: false })
   @IsOptional()

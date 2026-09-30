@@ -60,17 +60,20 @@ enum SessionType {
 }
 
 model User {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   name            String
-  email           String   @unique
+  email           String    @unique
   passwordHash    String
-  role            Role     @default(athlete)
-  aiImportEnabled Boolean  @default(true)
+  role            Role      @default(athlete)
+  aiImportEnabled Boolean   @default(true)
   /// Aceite dos termos/privacidade na inscrição pública (evidência LGPD): quando e qual versão.
   termsAcceptedAt DateTime?
   termsVersion    String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  /// Consentimento para dados de saúde (LGPD Art. 11): null = não respondeu; false = não/retirou. Quando mudou por último.
+  healthConsent   Boolean?
+  healthConsentAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   // Relations
   student           Student?           @relation("UserStudent")
@@ -85,7 +88,7 @@ model User {
   hydrationLogs     HydrationLog[]
   calorieLogs       CalorieLog[]
   movements         Movement[]
-  athleteMovements  Movement[]       @relation("AthleteMovements")
+  athleteMovements  Movement[]         @relation("AthleteMovements")
   personalRecords   PersonalRecord[]
   notifications     Notification[]
   workoutSessions   WorkoutSession[]
@@ -218,30 +221,29 @@ model Exercise {
 }
 
 model ExerciseLibrary {
-  id          String   @id @default(uuid())
-  coachId     String
-  name        String
-  youtubeUrl  String?
+  id           String   @id @default(uuid())
+  coachId      String
+  name         String
+  youtubeUrl   String?
   /// Capa enviada pelo coach (Cloudinary). Sem ela, o card usa a miniatura do vídeo ou fica compacto.
-  imageUrl    String?
-  sets        Int?
-  reps        String?
-  duration    String?
-  restSeconds Int?
-  loadPercent Float?
-  category    String?
-  notes       String?
+  imageUrl     String?
+  sets         Int?
+  reps         String?
+  duration     String?
+  restSeconds  Int?
+  loadPercent  Float?
+  category     String?
+  notes        String?
   /// Veio sozinho dos planos do coach (sincronização automática), não cadastrado à mão.
-  autoImported Boolean @default(false)
+  autoImported Boolean  @default(false)
   /// Importado e depois excluído pelo coach: fica oculto (não volta na próxima sincronização).
-  hidden       Boolean @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  hidden       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   coach User @relation("CoachLibrary", fields: [coachId], references: [id], onDelete: Cascade)
 
   @@index([coachId])
-
   @@map("exercise_library")
 }
 
@@ -325,6 +327,8 @@ enum SkipReason {
   Injury
   Later
   Other
+  /// Só o sistema grava: motivo de saúde removido quando o aluno retira o consentimento (LGPD Art. 8 §5).
+  Withheld
 }
 
 enum SkipDecision {
@@ -387,7 +391,6 @@ model Movement {
   personalRecords PersonalRecord[]
 
   @@index([athleteId])
-
   @@map("movements")
 }
 

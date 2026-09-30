@@ -18,6 +18,14 @@ describe('PublicSignupDto', () => {
     expect(errors.find(e => e.property === 'acceptTerms')?.constraints?.equals).toContain('aceitar os Termos');
   });
 
+  it('consentimento de saúde é opcional; quando vem, tem de ser booleano', async () => {
+    expect(await check({ ...base, healthConsent: true })).toHaveLength(0);
+    expect(await check({ ...base, healthConsent: false })).toHaveLength(0);
+    expect(
+      (await check({ ...base, healthConsent: 'sim' })).map((e) => e.property),
+    ).toContain('healthConsent');
+  });
+
   it('recusa senha curta, e-mail inválido, planId que não é UUID e nome curto', async () => {
     const props = async (o: object) => (await check(o)).map(e => e.property);
     expect(await props({ ...base, password: '1234567' })).toContain('password');
