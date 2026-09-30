@@ -4,40 +4,91 @@ import { PrismaService } from '../prisma/prisma.service';
 import { generateStrongPassword } from '../common/generate-strong-password';
 import { CreateCoachDto } from './dto/admin.dto';
 import { ACTIVE_STUDENT } from '../common/student-scope';
+import { paymentBreakdown, sumBreakdowns } from '../subscriptions/payment-breakdown';
+import { emptyMonths, groupByCoachAndMonth, lastMonths, PaidPayment } from './financial-months';
 
 @Injectable()
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Lista coaches com o real por trás da governança da plataforma: % configurada por contrato
-   * (só o admin define, por coach — nunca um valor fixo global), quantos alunos ele tem, e o
-   * repasse real já pago (soma de GatewayPayment com status 'paid' dos alunos dele, dividido em
-   * quanto é da plataforma e quanto é do coach pela % vigente).
+   * Lista coaches com o real por trás da governança da plataforma: % do contrato (só o admin define, por coach —
+   * vale para assinaturas NOVAS), quantos alunos ativos ele tem, e o repasse real já pago com a MESMA conta do
+   * Financeiro do coach: bruto → taxa do Asaas → AEVON (pelo % gravado em cada assinatura) → coach. Antes o admin
+   * calculava sobre o bruto e com o % de hoje, e os dois painéis mostravam números diferentes para o mesmo dinheiro.
    */
   async listCoaches() {
-    const coaches = await this.prisma.user.findMany({
-      where: { role: 'coach' },
-      select: { id: true, name: true, email: true, aiImportEnabled: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [coaches, paid] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: 'coach' },
+        select: { id: true, name: true, email: true, aiImportEnabled: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.paidPayments(),
+    ]);
 
     return Promise.all(coaches.map(async coach => {
-      const [contract, studentCount, paidAgg] = await Promise.all([
+      const [contract, studentCount] = await Promise.all([
         this.prisma.coachContract.findUnique({ where: { coachId: coach.id }, select: { platformFeePercent: true } }),
         this.prisma.student.count({ where: { coachId: coach.id, ...ACTIVE_STUDENT } }),
-        this.prisma.gatewayPayment.aggregate({
-          where: { status: 'paid', subscription: { student: { coachId: coach.id } } },
-          _sum: { amount: true },
-        }),
       ]);
+      const totals = sumBreakdowns(
+        paid.filter(p => p.coachId === coach.id).map(p => paymentBreakdown(p.amount, p.netValue, p.platformFeePercent)),
+      );
+      return {
+        ...coach,
+        platformFeePercent: contract ? Number(contract.platformFeePercent) : 0,
+        studentCount,
+        totalPaid: totals.gross,
+        gatewayFee: totals.gatewayFee,
+        platformCut: totals.platformFee,
+        coachCut: totals.coachNet,
+        pendingBreakdown: totals.pendingBreakdown,
+      };
+    }));
+  }
 
-      const platformFeePercent = contract ? Number(contract.platformFeePercent) : 0;
-      const totalPaid = paidAgg._sum.amount ?? 0;
-      const platformCut = Math.round(totalPaid * platformFeePercent) / 100;
-      const coachCut = totalPaid - platformCut;
+  /**
+   * Financeiro por coach, mês a mês (o atual e os 5 anteriores), pelo mês em que a cobrança foi PAGA, e o total da
+   * plataforma. Só cobranças pagas pelo Asaas (as de alunos com a conta excluída continuam — são registro fiscal).
+   */
+  async financialOverview(now = new Date()) {
+    const months = lastMonths(now, 6);
+    const [coaches, paid] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: 'coach' },
+        select: { id: true, name: true, email: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.paidPayments({ gte: months[0].start, lt: months[months.length - 1].end }),
+    ]);
+    const { byCoach, totals } = groupByCoachAndMonth(paid, months);
+    return {
+      months: months.map(m => m.key),
+      coaches: coaches.map(c => ({ ...c, months: byCoach.get(c.id) ?? emptyMonths(months) })),
+      totals,
+    };
+  }
 
-      return { ...coach, platformFeePercent, studentCount, totalPaid, platformCut, coachCut };
+  /** Cobranças PAGAS (opcionalmente num intervalo de pagamento), com o que a conta real precisa. */
+  private async paidPayments(paidAt?: { gte: Date; lt: Date }): Promise<PaidPayment[]> {
+    const rows = await this.prisma.gatewayPayment.findMany({
+      where: { status: 'paid', ...(paidAt ? { paidAt } : {}) },
+      select: {
+        amount: true,
+        netValue: true,
+        paidAt: true,
+        // inclui desvinculados: cobrança paga de ex-aluno continua sendo receita do coach (registro fiscal).
+        subscription: { select: { platformFeePercent: true, student: { select: { coachId: true } } } },
+      },
+    });
+    return rows.map(r => ({
+      amount: r.amount,
+      netValue: r.netValue,
+      // Pago sempre tem data (o webhook grava junto); sem data, conta como fora do período.
+      paidAt: r.paidAt ?? new Date(0),
+      platformFeePercent: r.subscription.platformFeePercent,
+      coachId: r.subscription.student.coachId,
     }));
   }
 

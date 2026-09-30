@@ -21,7 +21,7 @@ describe('AdminController — guards e roles', () => {
 
 function build() {
   const service = {
-    listCoaches: jest.fn(), createCoach: jest.fn(), resetCoachPassword: jest.fn(), toggleCoachAi: jest.fn(),
+    listCoaches: jest.fn(), financialOverview: jest.fn().mockResolvedValue({ months: [] }), createCoach: jest.fn(), resetCoachPassword: jest.fn(), toggleCoachAi: jest.fn(),
   };
   const contracts = { get: jest.fn(), setFee: jest.fn() };
   const platformSettings = { get: jest.fn(), setEnforcement: jest.fn() };
@@ -92,5 +92,13 @@ describe('AdminController — exclusão de conta de aluno (LGPD Art. 18)', () =>
     expect(account.findAthleteByEmail).toHaveBeenCalledWith('ana@example.com');
     await controller.anonymizeAthlete('u1');
     expect(account.anonymize).toHaveBeenCalledWith('u1', 'admin');
+  });
+});
+
+describe('AdminController — financeiro por coach', () => {
+  it('repassa para o serviço', async () => {
+    const { controller, service } = build();
+    await expect(controller.financial()).resolves.toEqual({ months: [] });
+    expect(service.financialOverview).toHaveBeenCalled();
   });
 });

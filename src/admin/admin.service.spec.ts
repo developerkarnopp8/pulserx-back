@@ -25,7 +25,7 @@ describe('AdminService', () => {
         count: jest.fn().mockResolvedValue(0),
       },
       gatewayPayment: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
     };
 
@@ -44,58 +44,106 @@ describe('AdminService', () => {
     expect(result).toEqual([
       {
         id: 'coach-1', name: 'Luan Silveira', email: 'luan@aevonfit.com', aiImportEnabled: true, createdAt: new Date('2026-01-01'),
-        platformFeePercent: 0, studentCount: 0, totalPaid: 0, platformCut: 0, coachCut: 0,
+        platformFeePercent: 0, studentCount: 0, totalPaid: 0, gatewayFee: 0, platformCut: 0, coachCut: 0, pendingBreakdown: 0,
       },
     ]);
   });
 
-  describe('governança: % por contrato, alunos e repasse real', () => {
-    it('sem contrato cadastrado: % 0, mas ainda mostra alunos/repasse reais', async () => {
-      prisma.coachContract.findUnique.mockResolvedValue(null);
+  const pago = (coachId: string, amount: number, netValue: number | null, pct: number | null, paidAt = new Date()) => ({
+    amount, netValue, paidAt, subscription: { platformFeePercent: pct, student: { coachId } },
+  });
+
+  describe('governança: % por contrato, alunos e repasse real (mesma conta do Financeiro do coach)', () => {
+    it('sem contrato cadastrado: % 0, mas ainda mostra alunos e o repasse real', async () => {
       prisma.student.count.mockResolvedValue(12);
-      prisma.gatewayPayment.aggregate.mockResolvedValue({ _sum: { amount: 1200 } });
+      prisma.gatewayPayment.findMany.mockResolvedValue([pago('coach-1', 1200, 1170, 0)]);
 
       const [result] = await service.listCoaches();
 
-      expect(result.platformFeePercent).toBe(0);
-      expect(result.studentCount).toBe(12);
-      expect(result.totalPaid).toBe(1200);
-      expect(result.platformCut).toBe(0);
-      expect(result.coachCut).toBe(1200);
+      expect(result).toMatchObject({
+        platformFeePercent: 0, studentCount: 12, totalPaid: 1200, gatewayFee: 30, platformCut: 0, coachCut: 1170,
+      });
     });
 
-    it('com contrato: divide o total pago entre plataforma e coach pela % configurada', async () => {
-      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '10.00' });
-      prisma.student.count.mockResolvedValue(100);
-      prisma.gatewayPayment.aggregate.mockResolvedValue({ _sum: { amount: 10000 } });
+    it('divide o LÍQUIDO (depois da taxa do Asaas) pelo % gravado em cada assinatura — não pelo % do contrato de hoje', async () => {
+      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '25.00' });
+      prisma.gatewayPayment.findMany.mockResolvedValue([
+        pago('coach-1', 100, 97, 10), // AEVON 9,70 / coach 87,30
+        pago('coach-1', 100, 97, 20), // assinatura antiga: AEVON 19,40 / coach 77,60
+      ]);
 
       const [result] = await service.listCoaches();
 
-      expect(result.platformFeePercent).toBe(10);
-      expect(result.platformCut).toBe(1000);
-      expect(result.coachCut).toBe(9000);
+      expect(result.platformFeePercent).toBe(25);
+      expect(result).toMatchObject({ totalPaid: 200, gatewayFee: 6, platformCut: 29.1, coachCut: 164.9, pendingBreakdown: 0 });
+      expect(prisma.gatewayPayment.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { status: 'paid' } }));
     });
 
-    it('escopa alunos e pagamentos pelo coachId — cada coach é consultado separadamente', async () => {
+    it('cobrança sem líquido ainda: conta no bruto e fica pendente, sem repasse inventado', async () => {
+      prisma.gatewayPayment.findMany.mockResolvedValue([pago('coach-1', 150, null, 10)]);
+      const [result] = await service.listCoaches();
+      expect(result).toMatchObject({ totalPaid: 150, platformCut: 0, coachCut: 0, pendingBreakdown: 1 });
+    });
+
+    it('cada coach só soma as cobranças dos alunos dele', async () => {
       prisma.user.findMany.mockResolvedValue([
         { id: 'coach-1', name: 'Luan', email: 'luan@x.com', aiImportEnabled: true, createdAt: new Date() },
         { id: 'coach-2', name: 'Lucas', email: 'lucas@x.com', aiImportEnabled: true, createdAt: new Date() },
       ]);
+      prisma.gatewayPayment.findMany.mockResolvedValue([pago('coach-1', 100, 100, 0), pago('coach-2', 40, 40, 0)]);
 
-      await service.listCoaches();
+      const result = await service.listCoaches();
 
       expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-1', unlinkedAt: null } });
       expect(prisma.student.count).toHaveBeenCalledWith({ where: { coachId: 'coach-2', unlinkedAt: null } });
-      expect(prisma.gatewayPayment.aggregate).toHaveBeenCalledWith(expect.objectContaining({
-        where: { status: 'paid', subscription: { student: { coachId: 'coach-1' } } },
-      }));
+      expect(result.map(r => r.totalPaid)).toEqual([100, 40]);
     });
 
-    it('sem nenhum pagamento pago ainda: totalPaid 0, não quebra', async () => {
-      prisma.gatewayPayment.aggregate.mockResolvedValue({ _sum: { amount: null } });
+    it('sem nenhum pagamento pago ainda: tudo 0, não quebra', async () => {
       const [result] = await service.listCoaches();
-      expect(result.totalPaid).toBe(0);
-      expect(result.coachCut).toBe(0);
+      expect(result).toMatchObject({ totalPaid: 0, coachCut: 0, pendingBreakdown: 0 });
+    });
+  });
+
+  describe('financialOverview — mês a mês', () => {
+    const agora = new Date(2026, 8, 20); // setembro/2026
+
+    it('6 meses por coach e o total da plataforma, pelo mês do pagamento', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'coach-1', name: 'Ana', email: 'ana@x.com' },
+        { id: 'coach-2', name: 'Bia', email: 'bia@x.com' },
+      ]);
+      prisma.gatewayPayment.findMany.mockResolvedValue([
+        pago('coach-1', 100, 97, 10, new Date(2026, 8, 3)),
+        pago('coach-1', 60, 58, 10, new Date(2026, 6, 10)),
+      ]);
+
+      const r = await service.financialOverview(agora);
+
+      expect(r.months).toEqual(['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09']);
+      expect(r.coaches[0].months[5]).toMatchObject({ count: 1, gross: 100, gatewayFee: 3, platformFee: 9.7, coachNet: 87.3 });
+      expect(r.coaches[0].months[3]).toMatchObject({ count: 1, gross: 60 });
+      // Coach sem movimento: meses zerados, sem sumir da lista.
+      expect(r.coaches[1].months).toHaveLength(6);
+      expect(r.coaches[1].months.every((m: any) => m.count === 0)).toBe(true);
+      expect(r.totals[5]).toMatchObject({ gross: 100 });
+      expect(prisma.gatewayPayment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { status: 'paid', paidAt: { gte: new Date(2026, 3, 1), lt: new Date(2026, 9, 1) } },
+      }));
+      expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { role: 'coach' }, orderBy: { name: 'asc' } }));
+    });
+
+    it('cobrança paga sem data (não deveria existir) fica fora do período, sem quebrar', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'coach-1', name: 'Ana', email: 'ana@x.com' }]);
+      prisma.gatewayPayment.findMany.mockResolvedValue([{ ...pago('coach-1', 100, 97, 10), paidAt: null }]);
+      const r = await service.financialOverview(agora);
+      expect(r.totals.every((t: any) => t.count === 0)).toBe(true);
+    });
+
+    it('usa a data de agora quando não recebe uma', async () => {
+      prisma.user.findMany.mockResolvedValue([]);
+      const r = await service.financialOverview();
+      expect(r.months).toHaveLength(6);
     });
   });
 

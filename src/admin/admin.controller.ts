@@ -45,6 +45,12 @@ export class AdminController {
     return this.service.listCoaches();
   }
 
+  @Get('financial')
+  @ApiOperation({ summary: 'Financeiro por coach no mês atual e nos 5 anteriores (bruto, taxa Asaas, AEVON, coach)' })
+  financial() {
+    return this.service.financialOverview();
+  }
+
   @Post('coaches')
   @ApiOperation({ summary: 'Cria conta de coach nova, com senha forte gerada na hora' })
   createCoach(@Body() dto: CreateCoachDto) {

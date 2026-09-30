@@ -103,6 +103,14 @@
 > dia com o schema" falha se não gerar. Passo a passo de deploy (backup → rsync limpo → build → `migrate deploy` ANTES de trocar o container →
 > smoke) em **`docs/DEPLOY_PRODUCAO.md`**. Banco local: `npx prisma migrate resolve --applied <nome>` quando a mudança já foi aplicada por `db push`.
 
+> **Painel do admin — PR 1 financeiro por coach (pedido do dono, 2026-09-30, branch `feat-admin-financeiro-coach`):** `GET /admin/financial`
+> (`AdminService.financialOverview`, lógica pura em `admin/financial-months.ts`): cobranças PAGAS do Asaas por coach e por mês do pagamento
+> (atual + 5 anteriores) e o total da plataforma, com a MESMA conta do Financeiro do coach (`paymentBreakdown`: bruto → taxa do Asaas →
+> AEVON pelo % gravado na assinatura → coach); corte de mês no fuso do servidor, igual ao `getMonthlyBreakdown`. **Correção:** o
+> `listCoaches` calculava o repasse sobre o BRUTO e com o % ATUAL do contrato — agora usa a conta real (+ `gatewayFee`, `pendingBreakdown`).
+> Cobranças de alunos desvinculados/excluídos continuam contando (registro fiscal). PR 2 (depois): assinaturas/MRR por coach, alertas,
+> uso (com registro novo de último login e de planos importados por IA — decisão do dono).
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.
