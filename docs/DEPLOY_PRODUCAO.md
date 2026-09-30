@@ -20,6 +20,22 @@
   (tabelas novas, colunas opcionais ou com valor padrão, `studentId` do plano deixa de ser obrigatório, valor novo no enum
   `SkipReason`). Testadas localmente sobre a estrutura de produção com dados fictícios e com o `prisma migrate deploy` real.
 
+## Chaves no `.env` da VPS (`/opt/aevonfit/backend/.env`)
+
+O dono coloca os valores direto na VPS — nunca em chat, commit ou PR. A API **não sobe** sem estas (o `docker-compose.prod.yml`
+usa `${VAR:?}` e para antes de trocar o container se faltar alguma):
+
+| Variável | O que é |
+|---|---|
+| `DB_PASSWORD`, `JWT_SECRET`, `ANTHROPIC_API_KEY` | já existiam |
+| `ASAAS_API_KEY` | chave da conta Asaas. **Começa com `$`: escreva entre aspas simples** (`ASAAS_API_KEY='$aact_prod_...'`) — sem aspas o Compose apaga o valor (armadilha nº 4 do guia) |
+| `ASAAS_ENV` | `production` (cobrança real) ou `sandbox` (teste) |
+| `ASAAS_WEBHOOK_TOKEN` | um segredo longo gerado por você, o MESMO cadastrado no webhook do painel do Asaas |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | conta Cloudinary do PulseRx (fotos da landing) |
+| `RESEND_API_KEY`, `EMAIL_FROM` | conta Resend do PulseRx (e-mails; sem domínio verificado só entrega para o dono da conta) |
+
+Conferir sem mostrar valores: `grep -oE '^[A-Z_]+=' /opt/aevonfit/backend/.env`. Qualquer valor com `$` vai entre aspas simples.
+
 ## Passo a passo
 
 1. **Antes:** PRs mergeados no `main`, CI verde, `security-analyst` e LGPD do lote.
@@ -36,7 +52,7 @@
    eval $RSYNC -n -i ./ root@77.37.43.188:/opt/aevonfit/backend/   # ler as linhas *deleting antes
    eval $RSYNC ./ root@77.37.43.188:/opt/aevonfit/backend/
    ```
-4. **Imagem nova** (na VPS): `cd /opt/aevonfit/backend && docker compose -f docker-compose.prod.yml build api`
+4. **Imagem nova** (na VPS): `cd /opt/aevonfit/backend && docker compose -f docker-compose.prod.yml config -q && docker compose -f docker-compose.prod.yml build api` (o `config -q` falha na hora se faltar chave)
 5. **Migrations ANTES de trocar o container** (regra de ouro 8 — o container antigo segue atendendo; as migrations são aditivas):
    ```bash
    docker compose -f docker-compose.prod.yml run --rm api npx prisma migrate status

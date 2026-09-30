@@ -23,6 +23,16 @@ services:
       JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env — sem valor padrão por segurança}
       JWT_EXPIRES_IN: 7d
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?defina ANTHROPIC_API_KEY no .env}
+      # Integrações que a API exige na subida (sem elas o container não inicia). O `:?` faz o compose parar ANTES
+      # de trocar o container se faltar alguma — a versão no ar continua atendendo.
+      ASAAS_API_KEY: ${ASAAS_API_KEY:?defina ASAAS_API_KEY no .env}
+      ASAAS_ENV: ${ASAAS_ENV:?defina ASAAS_ENV no .env (production = cobrança real; sandbox = teste)}
+      ASAAS_WEBHOOK_TOKEN: ${ASAAS_WEBHOOK_TOKEN:?defina ASAAS_WEBHOOK_TOKEN no .env (o mesmo cadastrado no webhook do Asaas)}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:?defina CLOUDINARY_CLOUD_NAME no .env}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:?defina CLOUDINARY_API_KEY no .env}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:?defina CLOUDINARY_API_SECRET no .env}
+      RESEND_API_KEY: ${RESEND_API_KEY:?defina RESEND_API_KEY no .env}
+      EMAIL_FROM: ${EMAIL_FROM:?defina EMAIL_FROM no .env}
       PORT: 3000
     ports:
       - '127.0.0.1:4120:3000'
