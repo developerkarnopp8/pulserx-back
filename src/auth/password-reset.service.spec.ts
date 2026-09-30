@@ -107,7 +107,9 @@ describe('PasswordResetService.requestReset — esqueci minha senha', () => {
     expect(email.send.mock.calls[0][2]).toContain('https://aevonfit.aevon.online/redefinir-senha#token=');
     expect(log).not.toHaveBeenCalled();
     process.env.NODE_ENV = env;
-    process.env.APP_URL = url;
+    // Restaurar sem transformar "não definido" na string 'undefined'.
+    if (url === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = url;
   });
 });
 
@@ -137,7 +139,8 @@ describe('PasswordResetService.sendStudentReset — coach manda o link ao aluno'
 describe('PasswordResetService.resetPassword — criar a senha nova pelo link', () => {
   const futuro = () => new Date(Date.now() + 60_000);
   const valido = (over: Record<string, unknown> = {}) => ({
-    id: 't1', userId: 'u1', purpose: 'RESET_PASSWORD', expiresAt: futuro(), usedAt: null, user: { deletedAt: null }, ...over,
+    id: 't1', userId: 'u1', purpose: 'RESET_PASSWORD', expiresAt: futuro(), usedAt: null,
+    user: { deletedAt: null, emailVerifiedAt: new Date('2026-01-01') }, ...over,
   });
 
   it('link válido: troca a senha, marca a troca (derruba sessões), gasta o link e invalida os outros', async () => {
@@ -150,16 +153,21 @@ describe('PasswordResetService.resetPassword — criar a senha nova pelo link', 
     const { data } = prisma.user.update.mock.calls[0][0];
     expect(await bcrypt.compare('senha-nova-123', data.passwordHash)).toBe(true);
     expect(data.passwordChangedAt).toBeInstanceOf(Date);
+    expect(data).not.toHaveProperty('emailVerifiedAt'); // já confirmado: a data original fica
     expect(prisma.authToken.updateMany).toHaveBeenNthCalledWith(2, {
       where: { userId: 'u1', usedAt: null, purpose: { in: ['RESET_PASSWORD', 'SET_PASSWORD'] } },
       data: { usedAt: expect.any(Date) },
     });
   });
 
-  it('link de "crie sua senha" (boas-vindas) também serve', async () => {
+  it('link de "crie sua senha" (boas-vindas) também serve e confirma o e-mail de quem ainda não tinha confirmado', async () => {
     const { service, prisma } = build();
-    prisma.authToken.findUnique.mockResolvedValue(valido({ purpose: 'SET_PASSWORD' }));
+    prisma.authToken.findUnique.mockResolvedValue(valido({ purpose: 'SET_PASSWORD', user: { deletedAt: null, emailVerifiedAt: null } }));
     await expect(service.resetPassword(TOKEN, 'senha-nova-123')).resolves.toEqual({ reset: true });
+    const { data } = prisma.user.update.mock.calls[0][0];
+    expect(data.emailVerifiedAt).toBeInstanceOf(Date);
+    expect(data.emailVerifiedAt).toBe(data.passwordChangedAt);
+    expect(prisma.authToken.findUnique.mock.calls[0][0].select.user).toEqual({ select: { deletedAt: true, emailVerifiedAt: true } });
   });
 
   it.each([
@@ -181,5 +189,49 @@ describe('PasswordResetService.resetPassword — criar a senha nova pelo link', 
     prisma.authToken.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(service.resetPassword(TOKEN, 'senha-nova-123')).rejects.toThrow('Link inválido ou expirado');
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('PasswordResetService — link enviado pelo admin e boas-vindas "crie sua senha"', () => {
+  const ana = { id: 'u1', name: 'Ana <b>', email: 'ana@example.com' };
+
+  it('admin manda o link de nova senha ao coach: texto próprio, 1 hora', async () => {
+    const { service, email } = build();
+    await service.sendResetLink(ana, 'admin');
+    expect(email.send.mock.calls[0][2]).toContain('A equipe do PulseRx enviou um link');
+    expect(email.send.mock.calls[0][2]).toContain('/redefinir-senha#token=');
+  });
+
+  it('aluno criado pelo coach: link "crie sua senha" de 7 dias, com o nome do coach escapado', async () => {
+    const { service, prisma, email } = build();
+    const antes = Date.now();
+    await service.sendWelcome(ana, { tipo: 'coach', nome: 'Luan <i>' });
+
+    expect(prisma.authToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', usedAt: null, purpose: 'SET_PASSWORD' },
+      data: { usedAt: expect.any(Date) },
+    });
+    const data = prisma.authToken.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ userId: 'u1', purpose: 'SET_PASSWORD' });
+    const validade = data.expiresAt.getTime() - antes;
+    expect(validade).toBeGreaterThanOrEqual(604_800_000 - 50);
+    expect(validade).toBeLessThanOrEqual(604_800_000 + 1000);
+
+    const [para, assunto, html] = email.send.mock.calls[0];
+    expect(para).toBe('ana@example.com');
+    expect(assunto).toBe('Crie sua senha — PulseRx');
+    expect(html).toContain('Olá, Ana &lt;b&gt;.');
+    expect(html).toContain('Seu treinador Luan &lt;i&gt; criou a sua conta no PulseRx.');
+    expect(html).toContain('O link vale 7 dias');
+    const token = /#token=([A-Za-z0-9_-]{43})"/.exec(html)![1];
+    expect(hashEmailToken(token)).toBe(data.tokenHash);
+  });
+
+  it('coach criado pelo admin: texto de conta de treinador', async () => {
+    const { service, email } = build();
+    const log = jest.spyOn((service as any).logger, 'log').mockImplementation(() => undefined);
+    await service.sendWelcome(ana, { tipo: 'admin' });
+    expect(email.send.mock.calls[0][2]).toContain('A equipe do PulseRx criou a sua conta de treinador.');
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[dev\] link de criar senha de ana@example\.com: http/));
   });
 });

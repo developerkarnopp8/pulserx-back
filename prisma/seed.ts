@@ -17,6 +17,7 @@ async function main() {
       name: 'Luan Silveira',
       email: 'luan@aevonfit.com',
       passwordHash: coachPassword,
+      emailVerifiedAt: new Date(), // criado por quem opera o servidor: não precisa confirmar
       role: 'coach',
     },
   });
@@ -28,6 +29,7 @@ async function main() {
       name: 'Gustavo Karnopp',
       email: 'gustavo@aevonfit.com',
       passwordHash: athletePassword,
+      emailVerifiedAt: new Date(), // criado por quem opera o servidor: não precisa confirmar
       role: 'athlete',
     },
   });

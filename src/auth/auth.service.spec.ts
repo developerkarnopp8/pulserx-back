@@ -11,7 +11,7 @@ describe('AuthService.validateUser', () => {
 
   const userRow = {
     id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach',
-    passwordHash: '$hash', createdAt: new Date(),
+    passwordHash: '$hash', createdAt: new Date(), emailVerifiedAt: new Date(),
   };
 
   beforeEach(() => {
@@ -45,6 +45,26 @@ describe('AuthService.validateUser', () => {
     await expect(service.validateUser('ana@example.com', 'certa')).resolves.toMatchObject({ id: 'u1' });
   });
 
+  it('e-mail não confirmado + senha certa → 403 EMAIL_NOT_VERIFIED, sem registrar login', async () => {
+    users.findByEmail.mockResolvedValue({ ...userRow, emailVerifiedAt: null });
+    jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+
+    const err = await service.validateUser('ana@example.com', 'certa').catch(e => e);
+    expect(err.getStatus()).toBe(403);
+    expect(err.getResponse()).toEqual({
+      statusCode: 403,
+      code: 'EMAIL_NOT_VERIFIED',
+      message: 'Confirme seu e-mail para entrar. Enviamos um link para a sua caixa de entrada.',
+    });
+    expect(users.markLogin).not.toHaveBeenCalled();
+  });
+
+  it('e-mail não confirmado + senha errada → null (não revela que a conta existe)', async () => {
+    users.findByEmail.mockResolvedValue({ ...userRow, emailVerifiedAt: null });
+    jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);
+    await expect(service.validateUser('ana@example.com', 'errada')).resolves.toBeNull();
+  });
+
   it('senha errada → null', async () => {
     users.findByEmail.mockResolvedValue(userRow);
     jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);
@@ -59,7 +79,7 @@ describe('AuthService.validateUser', () => {
 
     const result = await service.validateUser('ana@example.com', 'certa');
 
-    expect(result).toEqual({ id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach', createdAt: userRow.createdAt });
+    expect(result).toEqual({ id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach', createdAt: userRow.createdAt, emailVerifiedAt: userRow.emailVerifiedAt });
     expect(result).not.toHaveProperty('passwordHash');
   });
 });

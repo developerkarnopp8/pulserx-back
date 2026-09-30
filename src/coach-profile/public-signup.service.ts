@@ -1,8 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthService } from '../auth/auth.service';
+import { EmailVerificationService } from '../auth/email-verification.service';
 import { TERMS_VERSION } from '../common/terms';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PublicSignupDto } from './dto/public-signup.dto';
@@ -17,15 +17,18 @@ function emailExists() {
 
 @Injectable()
 export class PublicSignupService {
+  private readonly logger = new Logger(PublicSignupService.name);
+
   constructor(
     private prisma: PrismaService,
-    private auth: AuthService,
+    private verification: EmailVerificationService,
     private notifications: NotificationsService,
   ) {}
 
   /**
-   * Visitante da landing cria a própria conta de aluno, já vinculada ao coach DA PÁGINA, e sai
-   * logado (o front segue direto pro pagamento do plano escolhido). Regras:
+   * Visitante da landing cria a própria conta de aluno, já vinculada ao coach DA PÁGINA. Sai SEM sessão: recebe o
+   * link de confirmação por e-mail (decisão do dono, 2026-09-30 — a conta só entra depois de confirmar); o link leva
+   * de volta ao pagamento do plano escolhido. Regras:
    * - página publicada (não publicada = 404, igual ao GET público — nunca diferencia os casos);
    * - plano do MESMO coach e ativo (senão 404) — o id do coach nunca vem do corpo;
    * - e-mail já usado (sem diferenciar maiúsculas) = 409 com `code: EMAIL_EXISTS`: o front pede
@@ -64,8 +67,7 @@ export class PublicSignupService {
           healthConsent: dto.healthConsent === true,
           healthConsentAt: new Date(),
         },
-        // termsVersion/healthConsent: o login diz ao front que não há nada pendente (senão a tela de consentimento abriria).
-        select: { id: true, name: true, email: true, role: true, termsVersion: true, healthConsent: true },
+        select: { id: true, name: true, email: true },
       });
       await tx.student.create({ data: { userId: created.id, coachId: profile.coachId } });
       return created;
@@ -80,6 +82,10 @@ export class PublicSignupService {
       .create(profile.coachId, 'new_student', 'Novo aluno pela sua página', `${user.name} se inscreveu no plano ${plan.name}.`, '/coach/students')
       .catch(() => undefined);
 
-    return { ...(await this.auth.login(user)), planId: plan.id };
+    // Falha ao gerar/enviar não desfaz a inscrição: a pessoa pede outro link na tela de entrada.
+    await this.verification.sendVerification(user, { slug, planId: plan.id }).catch(err =>
+      this.logger.error(`Falha ao enviar a confirmação (usuário ${user.id})`, err instanceof Error ? err.stack : String(err)),
+    );
+    return { pendingVerification: true as const, email: user.email };
   }
 }

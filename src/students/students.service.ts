@@ -1,11 +1,13 @@
 import {
-  Injectable, NotFoundException, ConflictException, ForbiddenException,
+  Injectable, NotFoundException, ConflictException, ForbiddenException, Logger,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStudentDto, UpdateStudentDto } from './dto/create-student.dto';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { PasswordResetService } from '../auth/password-reset.service';
+import { unusablePassword } from '../auth/email-tokens';
 
 type AuthUser = { id: string; role: string };
 
@@ -40,9 +42,12 @@ const STUDENT_SUBSCRIPTION_SELECT = {
 
 @Injectable()
 export class StudentsService {
+  private readonly logger = new Logger(StudentsService.name);
+
   constructor(
     private prisma: PrismaService,
     private subscriptions: SubscriptionsService,
+    private passwordReset: PasswordResetService,
   ) {}
 
   /** Coach dono do aluno, ou o próprio aluno — ninguém mais. */
@@ -147,13 +152,17 @@ export class StudentsService {
     return student;
   }
 
+  /**
+   * Coach cadastra o aluno SEM senha (decisão do dono, 2026-09-30): o aluno recebe por e-mail o link "crie sua senha"
+   * (7 dias) e criar a senha confirma o e-mail. Ninguém mais combina senha por WhatsApp.
+   */
   async create(coachId: string, dto: CreateStudentDto) {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('E-mail já cadastrado');
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const passwordHash = await bcrypt.hash(unusablePassword(), 10);
 
-    return this.prisma.$transaction(async tx => {
+    const student = await this.prisma.$transaction(async tx => {
       const user = await tx.user.create({
         data: { name: dto.name, email: dto.email, passwordHash, role: 'athlete' },
       });
@@ -162,6 +171,15 @@ export class StudentsService {
         include: { user: { select: { id: true, name: true, email: true } } },
       });
     });
+
+    // Falha no envio não desfaz o cadastro: o coach reenvia pelo botão "Enviar link de nova senha".
+    const coach = await this.prisma.user.findUnique({ where: { id: coachId }, select: { name: true } });
+    await this.passwordReset
+      .sendWelcome(student.user, { tipo: 'coach', nome: coach?.name ?? 'seu treinador' })
+      .catch(err =>
+        this.logger.error(`Falha ao enviar o "crie sua senha" (usuário ${student.user.id})`, err instanceof Error ? err.stack : String(err)),
+      );
+    return student;
   }
 
   /** Busca simples pro coach dono validar antes de escrever — sem cross-check de role. */

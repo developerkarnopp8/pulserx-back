@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ForgotPasswordDto, ResetPasswordDto } from './password-reset.dto';
+import { ForgotPasswordDto, ResetPasswordDto, VerifyEmailDto } from './password-reset.dto';
 
 const erros = async (cls: any, body: object) => (await validate(plainToInstance(cls, body))).length;
 
@@ -18,5 +18,12 @@ describe('DTOs de senha por e-mail', () => {
     expect(await erros(ResetPasswordDto, { token, password: 'x'.repeat(101) })).toBe(1);
     expect(await erros(ResetPasswordDto, { token: 'curto', password: 'senha-forte' })).toBe(1);
     expect(await erros(ResetPasswordDto, { token: 'x'.repeat(201), password: 'senha-forte' })).toBe(1);
+  });
+
+  it('VerifyEmailDto: token de 20 a 200', async () => {
+    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43) })).toBe(0);
+    expect(await erros(VerifyEmailDto, { token: 'curto' })).toBe(1);
+    expect(await erros(VerifyEmailDto, { token: 'x'.repeat(201) })).toBe(1);
+    expect(await erros(VerifyEmailDto, {})).toBe(1);
   });
 });
