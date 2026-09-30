@@ -6,6 +6,9 @@ import { CreateCoachDto } from './dto/admin.dto';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { paymentBreakdown, sumBreakdowns } from '../subscriptions/payment-breakdown';
 import { emptyMonths, groupByCoachAndMonth, lastMonths, PaidPayment } from './financial-months';
+import { coachAlerts, summarizeSubscriptions } from './coach-insights';
+
+const TRINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class AdminService {
@@ -17,28 +20,62 @@ export class AdminService {
    * Financeiro do coach: bruto → taxa do Asaas → AEVON (pelo % gravado em cada assinatura) → coach. Antes o admin
    * calculava sobre o bruto e com o % de hoje, e os dois painéis mostravam números diferentes para o mesmo dinheiro.
    */
-  async listCoaches() {
+  async listCoaches(now = new Date()) {
     const [coaches, paid] = await Promise.all([
       this.prisma.user.findMany({
         where: { role: 'coach' },
-        select: { id: true, name: true, email: true, aiImportEnabled: true, createdAt: true },
+        select: { id: true, name: true, email: true, aiImportEnabled: true, createdAt: true, lastLoginAt: true },
         orderBy: { createdAt: 'desc' },
       }),
       this.paidPayments(),
     ]);
+    const desde = new Date(now.getTime() - TRINTA_DIAS_MS);
 
-    return Promise.all(coaches.map(async coach => {
-      const [contract, studentCount] = await Promise.all([
-        this.prisma.coachContract.findUnique({ where: { coachId: coach.id }, select: { platformFeePercent: true } }),
-        this.prisma.student.count({ where: { coachId: coach.id, ...ACTIVE_STUDENT } }),
-      ]);
+    return Promise.all(coaches.map(async ({ lastLoginAt, ...coach }) => {
+      const [contract, studentCount, subscriptions, profile, plans, aiImportedPlans, completedWorkouts30d, lastPlan] =
+        await Promise.all([
+          this.prisma.coachContract.findUnique({
+            where: { coachId: coach.id },
+            select: { platformFeePercent: true, gatewayAccountRef: true },
+          }),
+          this.prisma.student.count({ where: { coachId: coach.id, ...ACTIVE_STUDENT } }),
+          this.prisma.subscription.findMany({
+            where: { student: { coachId: coach.id, ...ACTIVE_STUDENT } },
+            select: { status: true, plan: { select: { priceCents: true } } },
+          }),
+          this.prisma.coachProfile.findUnique({ where: { coachId: coach.id }, select: { published: true } }),
+          this.prisma.trainingPlan.count({ where: { coachId: coach.id } }),
+          this.prisma.trainingPlan.count({ where: { coachId: coach.id, importedByAi: true } }),
+          this.prisma.workoutSession.count({
+            where: { status: 'Completed', finishedAt: { gte: desde }, session: { day: { week: { plan: { coachId: coach.id } } } } },
+          }),
+          this.prisma.trainingPlan.findFirst({
+            where: { coachId: coach.id },
+            orderBy: { updatedAt: 'desc' },
+            select: { updatedAt: true },
+          }),
+        ]);
       const totals = sumBreakdowns(
         paid.filter(p => p.coachId === coach.id).map(p => paymentBreakdown(p.amount, p.netValue, p.platformFeePercent)),
       );
+      const platformFeePercent = contract ? Number(contract.platformFeePercent) : 0;
       return {
         ...coach,
-        platformFeePercent: contract ? Number(contract.platformFeePercent) : 0,
+        platformFeePercent,
         studentCount,
+        subscriptions: summarizeSubscriptions(subscriptions, studentCount),
+        alerts: coachAlerts({
+          platformFeePercent,
+          walletId: contract?.gatewayAccountRef ?? null,
+          pagePublished: profile?.published === true,
+        }),
+        usage: {
+          plans,
+          aiImportedPlans,
+          completedWorkouts30d,
+          lastLoginAt,
+          lastPlanUpdateAt: lastPlan?.updatedAt ?? null,
+        },
         totalPaid: totals.gross,
         gatewayFee: totals.gatewayFee,
         platformCut: totals.platformFee,

@@ -9,6 +9,11 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
+  /** Registra o último login com senha (painel do admin, "uso por coach"). */
+  async markLogin(id: string, now = new Date()): Promise<void> {
+    await this.prisma.user.update({ where: { id }, data: { lastLoginAt: now }, select: { id: true } });
+  }
+
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },

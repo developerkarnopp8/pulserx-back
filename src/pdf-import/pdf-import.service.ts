@@ -58,6 +58,8 @@ export class PdfImportService {
         startDate,
         title: extracted.planTitle,
         published: false,
+        // Painel do admin ("uso por coach"): quantos planos vieram da importação por IA.
+        importedByAi: true,
         weeks: {
           create: extracted.weeks.map(week => ({
             weekNumber: week.weekNumber,

@@ -11,7 +11,7 @@ describe('AdminService', () => {
     prisma = {
       user: {
         findMany: jest.fn().mockResolvedValue([
-          { id: 'coach-1', name: 'Luan Silveira', email: 'luan@aevonfit.com', aiImportEnabled: true, createdAt: new Date('2026-01-01') },
+          { id: 'coach-1', name: 'Luan Silveira', email: 'luan@aevonfit.com', aiImportEnabled: true, createdAt: new Date('2026-01-01'), lastLoginAt: null },
         ]),
         findUnique: jest.fn().mockResolvedValue({ id: 'coach-1', role: 'coach' }),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -27,6 +27,10 @@ describe('AdminService', () => {
       gatewayPayment: {
         findMany: jest.fn().mockResolvedValue([]),
       },
+      subscription: { findMany: jest.fn().mockResolvedValue([]) },
+      coachProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+      trainingPlan: { count: jest.fn().mockResolvedValue(0), findFirst: jest.fn().mockResolvedValue(null) },
+      workoutSession: { count: jest.fn().mockResolvedValue(0) },
     };
 
     const module = await Test.createTestingModule({
@@ -45,6 +49,9 @@ describe('AdminService', () => {
       {
         id: 'coach-1', name: 'Luan Silveira', email: 'luan@aevonfit.com', aiImportEnabled: true, createdAt: new Date('2026-01-01'),
         platformFeePercent: 0, studentCount: 0, totalPaid: 0, gatewayFee: 0, platformCut: 0, coachCut: 0, pendingBreakdown: 0,
+        subscriptions: { active: 0, trialing: 0, pastDue: 0, canceled: 0, withoutPlan: 0, mrrCents: 0 },
+        alerts: ['NO_CONTRACT', 'NO_WALLET', 'PAGE_UNPUBLISHED'],
+        usage: { plans: 0, aiImportedPlans: 0, completedWorkouts30d: 0, lastLoginAt: null, lastPlanUpdateAt: null },
       },
     ]);
   });
@@ -102,6 +109,54 @@ describe('AdminService', () => {
     it('sem nenhum pagamento pago ainda: tudo 0, não quebra', async () => {
       const [result] = await service.listCoaches();
       expect(result).toMatchObject({ totalPaid: 0, coachCut: 0, pendingBreakdown: 0 });
+    });
+  });
+
+  describe('assinaturas, alertas e uso por coach', () => {
+    const agora = new Date('2026-09-30T12:00:00Z');
+
+    it('resume assinaturas dos alunos ativos, alerta o que falta configurar e mostra o uso', async () => {
+      const login = new Date('2026-09-29T10:00:00Z');
+      const editou = new Date('2026-09-28T10:00:00Z');
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'coach-1', name: 'Luan', email: 'luan@x.com', aiImportEnabled: true, createdAt: new Date(), lastLoginAt: login },
+      ]);
+      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '10.00', gatewayAccountRef: 'wallet-1' });
+      prisma.student.count.mockResolvedValue(5);
+      prisma.subscription.findMany.mockResolvedValue([
+        { status: 'ACTIVE', plan: { priceCents: 14900 } },
+        { status: 'PAST_DUE', plan: { priceCents: 14900 } },
+      ]);
+      prisma.coachProfile.findUnique.mockResolvedValue({ published: false });
+      prisma.trainingPlan.count.mockResolvedValueOnce(7).mockResolvedValueOnce(2);
+      prisma.workoutSession.count.mockResolvedValue(31);
+      prisma.trainingPlan.findFirst.mockResolvedValue({ updatedAt: editou });
+
+      const [r] = await service.listCoaches(agora);
+
+      expect(r).not.toHaveProperty('lastLoginAt');
+      expect(r.subscriptions).toEqual({ active: 1, trialing: 0, pastDue: 1, canceled: 0, withoutPlan: 3, mrrCents: 14900 });
+      expect(r.alerts).toEqual(['PAGE_UNPUBLISHED']);
+      expect(r.usage).toEqual({ plans: 7, aiImportedPlans: 2, completedWorkouts30d: 31, lastLoginAt: login, lastPlanUpdateAt: editou });
+      expect(prisma.subscription.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { student: { coachId: 'coach-1', unlinkedAt: null } },
+      }));
+      expect(prisma.trainingPlan.count).toHaveBeenCalledWith({ where: { coachId: 'coach-1', importedByAi: true } });
+      expect(prisma.workoutSession.count).toHaveBeenCalledWith({
+        where: {
+          status: 'Completed',
+          finishedAt: { gte: new Date('2026-08-31T12:00:00Z') },
+          session: { day: { week: { plan: { coachId: 'coach-1' } } } },
+        },
+      });
+      expect(prisma.trainingPlan.findFirst).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { updatedAt: 'desc' } }));
+    });
+
+    it('contrato sem carteira do Asaas: alerta de carteira, não de contrato', async () => {
+      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '15.00', gatewayAccountRef: null });
+      prisma.coachProfile.findUnique.mockResolvedValue({ published: true });
+      const [r] = await service.listCoaches(agora);
+      expect(r.alerts).toEqual(['NO_WALLET']);
     });
   });
 

@@ -96,6 +96,8 @@ describe('PdfImportService', () => {
     expect(createCall.data.coachId).toBe(coachId);
     expect(createCall.data.studentId).toBe('student-1');
     expect(createCall.data.published).toBe(false);
+    // Painel do admin: o plano fica marcado como vindo da importação por IA.
+    expect(createCall.data.importedByAi).toBe(true);
     expect(createCall.data.title).toBe('Mesociclo 6');
     expect(createCall.data.weeks.create[0].weekNumber).toBe(1);
     expect(createCall.data.weeks.create[0].days.create[0].dayOfWeek).toBe('Terça');
