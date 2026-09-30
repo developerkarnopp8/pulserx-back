@@ -65,8 +65,32 @@ describe('SubscriptionsService.assign', () => {
     await service.assign('s1', coach, { planId: 'p1' });
     expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { studentId: 's1' },
-      create: { studentId: 's1', planId: 'p1', status: 'ACTIVE', trialEndsAt: null, canceledAt: null },
-      update: { planId: 'p1', status: 'ACTIVE', trialEndsAt: null, canceledAt: null },
+      create: {
+        studentId: 's1', planId: 'p1', status: 'ACTIVE', trialEndsAt: null, canceledAt: null,
+        gateway: null, gatewaySubscriptionId: null,
+      },
+      update: {
+        planId: 'p1', status: 'ACTIVE', trialEndsAt: null, canceledAt: null, gateway: null, gatewaySubscriptionId: null,
+      },
+    }));
+    expect(prisma.student.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 's1', unlinkedAt: null } }),
+    );
+  });
+
+  it('aluno que paga pelo app (cobrança ativa no Asaas): 409 — trocar à mão deixaria o Asaas cobrando o plano antigo', async () => {
+    for (const status of ['ACTIVE', 'PAST_DUE', 'TRIALING']) {
+      const { service, prisma } = build({ current: { planId: 'p0', status, gatewaySubscriptionId: 'sub_asaas_1' } });
+      await expect(service.assign('s1', coach, { planId: 'p1' })).rejects.toThrow('remova a assinatura antes');
+      expect(prisma.subscription.upsert).not.toHaveBeenCalled();
+    }
+  });
+
+  it('cobrança do Asaas já cancelada: atribui à mão e limpa o id antigo do gateway', async () => {
+    const { service, prisma } = build({ current: { planId: 'p0', status: 'CANCELED', gatewaySubscriptionId: 'sub_asaas_1' } });
+    await service.assign('s1', coach, { planId: 'p1' });
+    expect(prisma.subscription.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ gateway: null, gatewaySubscriptionId: null }),
     }));
   });
 
@@ -158,6 +182,34 @@ describe('SubscriptionsService.getForStudent / remove', () => {
     await expect(service.remove('s1', admin)).resolves.toEqual({ removed: false });
   });
 
+  it('remove de quem paga pelo app: cancela no Asaas e ENCERRA (não apaga — as cobranças são histórico fiscal)', async () => {
+    const { service, prisma, asaas } = build({
+      current: { status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_1', _count: { gatewayPayments: 2 } },
+    });
+    await expect(service.remove('s1', coach)).resolves.toEqual({ removed: true });
+    expect(asaas.cancelSubscription).toHaveBeenCalledWith('sub_asaas_1');
+    expect(prisma.subscription.update).toHaveBeenCalledWith({
+      where: { studentId: 's1' },
+      data: { status: 'CANCELED', canceledAt: expect.any(Date) },
+    });
+    expect(prisma.subscription.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('remove de assinatura manual que já teve cobrança pelo app (sem id ativo): encerra sem chamar o Asaas', async () => {
+    const { service, prisma, asaas } = build({
+      current: { status: 'ACTIVE', gatewaySubscriptionId: null, _count: { gatewayPayments: 1 } },
+    });
+    await expect(service.remove('s1', coach)).resolves.toEqual({ removed: true });
+    expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+    expect(prisma.subscription.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('remove de assinatura manual sem cobrança nenhuma: apaga como antes', async () => {
+    const { service, prisma } = build({ current: { status: 'ACTIVE', gatewaySubscriptionId: null, _count: { gatewayPayments: 0 } } });
+    await expect(service.remove('s1', coach)).resolves.toEqual({ removed: true });
+    expect(prisma.subscription.deleteMany).toHaveBeenCalledWith({ where: { studentId: 's1' } });
+  });
+
   it('remove: outro coach é barrado sem apagar', async () => {
     const { service, prisma } = build({ student: { id: 's1', coachId: 'coach-9' } });
     await expect(service.remove('s1', coach)).rejects.toThrow('Você não tem acesso a este aluno.');
@@ -165,11 +217,46 @@ describe('SubscriptionsService.getForStudent / remove', () => {
   });
 });
 
+describe('SubscriptionsService.endSubscription', () => {
+  it('cancela no Asaas ANTES e marca CANCELED, na trava do aluno', async () => {
+    const { service, prisma, asaas } = build({ current: { status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_1' } });
+    await expect(service.endSubscription('s1')).resolves.toBe(true);
+    expect(prisma.$executeRaw).toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 15_000 });
+    expect(asaas.cancelSubscription.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.subscription.update.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('Asaas recusou: nada muda aqui (fail-closed)', async () => {
+    const { service, prisma, asaas } = build({ current: { status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_1' } });
+    asaas.cancelSubscription.mockRejectedValue(new Error('Asaas fora do ar'));
+    await expect(service.endSubscription('s1')).rejects.toThrow('Asaas fora do ar');
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('sem assinatura, ou já cancelada: nada a fazer (não chama o Asaas de novo)', async () => {
+    for (const current of [null, { status: 'CANCELED', gatewaySubscriptionId: 'sub_asaas_1' }]) {
+      const { service, prisma, asaas } = build({ current });
+      await expect(service.endSubscription('s1')).resolves.toBe(false);
+      expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it('assinatura manual (sem Asaas): só marca CANCELED', async () => {
+    const { service, prisma, asaas } = build({ current: { status: 'TRIALING', gatewaySubscriptionId: null } });
+    await expect(service.endSubscription('s1')).resolves.toBe(true);
+    expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).toHaveBeenCalled();
+  });
+});
+
 describe('SubscriptionsService.getMine', () => {
   it('devolve a assinatura do próprio aluno e as categorias que enxerga hoje', async () => {
     const { service, prisma, access } = build({ current: { id: 'sub1' } });
     await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({ subscription: { id: 'sub1' }, categories: ['CORE'] });
-    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1' }, select: { id: true } });
+    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', unlinkedAt: null }, select: { id: true } });
     expect(access.getViewableCategories).toHaveBeenCalledWith('s1');
   });
 
@@ -405,6 +492,13 @@ describe('SubscriptionsService.checkout', () => {
     expect(result.checkoutUrl).toBeNull();
   });
 
+  it('assinatura anterior já cancelada no Asaas: não pede para cancelar de novo', async () => {
+    const { service, asaas } = build({ current: { gatewaySubscriptionId: 'sub_asaas_antiga', status: 'CANCELED' } });
+    await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
+    expect(asaas.cancelSubscription).not.toHaveBeenCalled();
+    expect(asaas.createSubscription).toHaveBeenCalled();
+  });
+
   it('sem assinatura anterior (primeira vez): não chama cancelSubscription', async () => {
     const { service, asaas } = build({ current: null });
     await service.checkout(athlete, { planId: 'p1', cpf: '529.982.247-25' });
@@ -597,7 +691,7 @@ describe('SubscriptionsService.listMyPayments', () => {
     const { service, prisma } = build();
     await service.listMyPayments(athlete);
 
-    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1' }, select: { id: true } });
+    expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', unlinkedAt: null }, select: { id: true } });
     expect(prisma.gatewayPayment.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { subscription: { studentId: 's1' } },
       orderBy: { createdAt: 'desc' },

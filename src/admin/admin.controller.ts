@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Put, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, HttpCode, ParseUUIDPipe } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -8,6 +8,8 @@ import { CreateCoachDto, ToggleCoachAiDto } from './dto/admin.dto';
 import { CoachContractsService } from '../subscriptions/coach-contracts.service';
 import { PlatformSettingsService } from '../subscriptions/platform-settings.service';
 import { UpdateCoachContractDto, UpdatePlatformSettingsDto } from '../subscriptions/dto/subscription.dto';
+import { AccountService } from '../account/account.service';
+import { FindAthleteDto } from '../account/dto/account.dto';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -19,7 +21,23 @@ export class AdminController {
     private readonly service: AdminService,
     private readonly contracts: CoachContractsService,
     private readonly platformSettings: PlatformSettingsService,
+    private readonly account: AccountService,
   ) {}
+
+  // ── Exclusão de conta de aluno a pedido do titular (LGPD Art. 18), quando o pedido chega por e-mail ──
+
+  @Get('athletes')
+  @ApiOperation({ summary: 'Acha o aluno pelo e-mail exato do pedido de exclusão' })
+  findAthlete(@Query() dto: FindAthleteDto) {
+    return this.account.findAthleteByEmail(dto.email);
+  }
+
+  @Post('athletes/:id/anonymize')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Exclui (anonimiza) a conta do aluno: cancela a cobrança e apaga o que não é fiscal' })
+  anonymizeAthlete(@Param('id', ParseUUIDPipe) id: string) {
+    return this.account.anonymize(id, 'admin');
+  }
 
   @Get('coaches')
   @ApiOperation({ summary: 'Lista todos os coaches' })

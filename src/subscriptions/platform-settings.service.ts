@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { GRANTING_STATUSES } from './subscription-access.service';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 export type PlatformSettingsView = {
   enforceSubscriptionAccess: boolean;
@@ -17,9 +18,10 @@ export class PlatformSettingsService {
   async get(): Promise<PlatformSettingsView> {
     const [settings, totalStudents, studentsWithoutAccess] = await Promise.all([
       this.prisma.platformSettings.findUnique({ where: { id: 'singleton' } }),
-      this.prisma.student.count(),
+      this.prisma.student.count({ where: ACTIVE_STUDENT }),
       this.prisma.student.count({
         where: {
+          ...ACTIVE_STUDENT,
           OR: [
             { subscription: null },
             { subscription: { status: { notIn: GRANTING_STATUSES as SubscriptionStatus[] } } },

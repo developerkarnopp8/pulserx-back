@@ -9,6 +9,7 @@ import {
   CreateWeekDto, CreateDayDto, CreateSessionDto,
   CreateExerciseDto, UpdateExerciseDto,
 } from './dto/training-plan.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -72,7 +73,7 @@ export class TrainingPlansService {
   /** Coach dono do plano, ou o próprio aluno dono do plano — ninguém mais. Retorna o userId (athleteId) do aluno. */
   private async assertCanViewStudent(studentId: string, user: AuthUser): Promise<{ userId: string; coachId: string }> {
     const student = await this.prisma.student.findUnique({
-      where: { id: studentId },
+      where: { id: studentId, ...ACTIVE_STUDENT },
       select: { coachId: true, userId: true },
     });
     if (!student) throw new NotFoundException('Aluno não encontrado');
@@ -193,7 +194,7 @@ export class TrainingPlansService {
 
   async create(coachId: string, dto: CreatePlanDto) {
     const student = await this.prisma.student.findUnique({
-      where: { id: dto.studentId },
+      where: { id: dto.studentId, ...ACTIVE_STUDENT },
       select: { userId: true, coachId: true },
     });
     if (!student) throw new NotFoundException('Aluno não encontrado');
@@ -289,7 +290,7 @@ export class TrainingPlansService {
 
     // Compartilhado: avisa só os alunos do coach que enxergam a categoria.
     const students = await this.prisma.student.findMany({
-      where: { coachId },
+      where: { coachId, ...ACTIVE_STUDENT },
       select: { id: true, userId: true },
     });
     const allowedIds = new Set(
@@ -419,7 +420,7 @@ export class TrainingPlansService {
    */
   async getWeeklyCompletionByDayIndex(coachId: string): Promise<{ dayIndex: number; percent: number }[]> {
     const students = await this.prisma.student.findMany({
-      where: { coachId },
+      where: { coachId, ...ACTIVE_STUDENT },
       select: { id: true, userId: true, currentMonth: true, currentWeek: true },
     });
 

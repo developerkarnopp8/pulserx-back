@@ -8,7 +8,7 @@ import { StudentsService } from './students.service';
 function build() {
   const service = {
     findByUserId: jest.fn(), findAll: jest.fn(), findOne: jest.fn(),
-    getCurrentPlan: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn(),
+    getCurrentPlan: jest.fn(), create: jest.fn(), update: jest.fn(), unlink: jest.fn(),
   };
   const controller = new StudentsController(service as unknown as StudentsService);
   return { controller, service };
@@ -21,8 +21,8 @@ describe('StudentsController — guards', () => {
     );
   });
 
-  it('create/findAll/update/remove exigem @Roles(coach); findOne/getCurrentPlan/getMyProfile não têm @Roles próprio (liberado por auth, checagem de dono no service)', () => {
-    for (const m of ['create', 'findAll', 'update', 'remove'] as const) {
+  it('create/findAll/update/unlink exigem @Roles(coach); findOne/getCurrentPlan/getMyProfile não têm @Roles próprio (liberado por auth, checagem de dono no service)', () => {
+    for (const m of ['create', 'findAll', 'update', 'unlink'] as const) {
       expect(Reflect.getMetadata(ROLES_KEY, StudentsController.prototype[m])).toEqual(['coach']);
     }
     for (const m of ['findOne', 'getCurrentPlan', 'getMyProfile'] as const) {
@@ -73,9 +73,9 @@ describe('StudentsController — delegação', () => {
     expect(service.update).toHaveBeenCalledWith('s1', 'coach-1', { goal: 'novo' });
   });
 
-  it('remove repassa id + coachId do token', async () => {
+  it('desvincular repassa id + coachId do token', async () => {
     const { controller, service } = build();
-    await controller.remove('s1', { user: { id: 'coach-1' } });
-    expect(service.remove).toHaveBeenCalledWith('s1', 'coach-1');
+    await controller.unlink('s1', { user: { id: 'coach-1' } });
+    expect(service.unlink).toHaveBeenCalledWith('s1', 'coach-1');
   });
 });

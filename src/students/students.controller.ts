@@ -56,8 +56,10 @@ export class StudentsController {
 
   @Roles('coach')
   @Delete(':id')
-  @ApiOperation({ summary: 'Remove aluno e conta de usuário (somente o coach dono)' })
-  remove(@Param('id') id: string, @Request() req: any) {
-    return this.studentsService.remove(id, req.user.id);
+  @ApiOperation({
+    summary: 'Desvincula o aluno: cancela a cobrança, tira da lista e corta o acesso (somente o coach dono). Não apaga a conta.',
+  })
+  unlink(@Param('id') id: string, @Request() req: any) {
+    return this.studentsService.unlink(id, req.user.id);
   }
 }

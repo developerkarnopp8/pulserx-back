@@ -5,6 +5,7 @@ import { MessagesService } from '../messages/messages.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateWorkoutSkipDto } from './dto/create-workout-skip.dto';
 import { buildSkipMessage } from './skip-message';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -111,7 +112,7 @@ export class WorkoutSkipsService {
     // Quem pulou é sempre o aluno (skip.athleteId) — vale para plano individual e compartilhado
     // (que não tem studentId). Só entram alunos deste coach.
     const students = await this.prisma.student.findMany({
-      where: { coachId },
+      where: { coachId, ...ACTIVE_STUDENT },
       select: { id: true, userId: true },
     });
     const studentIdByUser = new Map(students.map(s => [s.userId, s.id]));

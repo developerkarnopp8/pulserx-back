@@ -11,10 +11,12 @@ describe('LocalStrategy.validate', () => {
     expect(authService.validateUser).toHaveBeenCalledWith('ana@example.com', 'segredo123');
   });
 
-  it('credenciais inválidas (AuthService devolve null): 401', async () => {
+  it('credenciais inválidas (AuthService devolve null): 401 com a frase em português', async () => {
     const authService = { validateUser: jest.fn().mockResolvedValue(null) };
     const strategy = new LocalStrategy(authService as unknown as AuthService);
 
-    await expect(strategy.validate('ana@example.com', 'errada')).rejects.toThrow(UnauthorizedException);
+    await expect(strategy.validate('ana@example.com', 'errada')).rejects.toThrow(
+      new UnauthorizedException('E-mail ou senha incorretos.'),
+    );
   });
 });

@@ -493,7 +493,7 @@ describe('TrainingPlansService.publish — notifica', () => {
 
     await service.publish('plan-2', 'coach-1');
 
-    expect(prisma.student.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1' } }));
+    expect(prisma.student.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { coachId: 'coach-1', unlinkedAt: null } }));
     expect(subscriptionAccess.filterStudentsWithCategory).toHaveBeenCalledWith(['s1', 's2'], 'CORE');
     expect(notificationsService.create).toHaveBeenCalledTimes(1);
     expect(notificationsService.create).toHaveBeenCalledWith(

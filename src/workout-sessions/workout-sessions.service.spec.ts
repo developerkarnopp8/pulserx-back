@@ -427,7 +427,7 @@ describe('WorkoutSessionsService.coachAvgDuration', () => {
     const result = await service.coachAvgDuration('coach-1');
 
     expect(prisma.student.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { coachId: 'coach-1' } }),
+      expect.objectContaining({ where: { coachId: 'coach-1', unlinkedAt: null } }),
     );
     expect(prisma.workoutSession.findMany).toHaveBeenCalledWith(
       expect.objectContaining({

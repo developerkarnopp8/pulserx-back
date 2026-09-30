@@ -103,6 +103,7 @@ export class ConsentsService {
     }
 
     // A notificação do pulo vai para o coach, com o link do plano DESTE aluno.
+    // inclui desvinculados: a limpeza vale para todos os vínculos que o aluno já teve.
     const alunos = await tx.student.findMany({
       where: { userId },
       select: { id: true },

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PaymentGateway, SubscriptionStatus } from '@prisma/client';
 import { paymentBreakdown, sumBreakdowns } from './payment-breakdown';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,7 @@ import { SubscriptionAccessService } from './subscription-access.service';
 import { CoachContractsService } from './coach-contracts.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AsaasService } from '../common/asaas.service';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 import { isValidCpf, onlyCpfDigits } from '../common/cpf';
 import { AssignSubscriptionDto, CheckoutSubscriptionDto } from './dto/subscription.dto';
 
@@ -39,7 +40,7 @@ export class SubscriptionsService {
   /** Coach dono do aluno, ou admin. O aluno consulta a própria assinatura por `getMine`. */
   private async assertCanManageStudent(studentId: string, user: AuthUser): Promise<{ id: string; coachId: string }> {
     const student = await this.prisma.student.findUnique({
-      where: { id: studentId },
+      where: { id: studentId, ...ACTIVE_STUDENT },
       select: { id: true, coachId: true },
     });
     if (!student) throw new NotFoundException('Aluno não encontrado');
@@ -57,7 +58,7 @@ export class SubscriptionsService {
 
   /** O próprio aluno: a assinatura dele e o que ela libera hoje. */
   async getMine(user: AuthUser) {
-    const student = await this.prisma.student.findFirst({ where: { userId: user.id }, select: { id: true } });
+    const student = await this.prisma.student.findFirst({ where: { userId: user.id, ...ACTIVE_STUDENT }, select: { id: true } });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
     const [subscription, categories] = await Promise.all([
       this.prisma.subscription.findUnique({ where: { studentId: student.id }, select: SUBSCRIPTION_VIEW }),
@@ -78,8 +79,14 @@ export class SubscriptionsService {
 
     const current = await this.prisma.subscription.findUnique({
       where: { studentId },
-      select: { planId: true },
+      select: { planId: true, status: true, gatewaySubscriptionId: true },
     });
+    // Aluno que paga pelo app: trocar o plano "à mão" deixaria o Asaas cobrando o plano antigo.
+    if (current?.gatewaySubscriptionId && current.status !== SubscriptionStatus.CANCELED) {
+      throw new ConflictException(
+        'Este aluno paga pelo app. Para mudar o plano à mão, remova a assinatura antes — isso cancela a cobrança no Asaas.',
+      );
+    }
     if (!plan.active && current?.planId !== plan.id) {
       throw new BadRequestException('Este plano está inativo — ative-o antes de atribuir a um aluno.');
     }
@@ -100,6 +107,9 @@ export class SubscriptionsService {
       status,
       trialEndsAt,
       canceledAt: status === SubscriptionStatus.CANCELED ? new Date() : null,
+      // Atribuição manual não tem gateway (a cobrança antiga, se houve, já está cancelada no Asaas).
+      gateway: null,
+      gatewaySubscriptionId: null,
     };
     return this.prisma.subscription.upsert({
       where: { studentId },
@@ -109,17 +119,50 @@ export class SubscriptionsService {
     });
   }
 
-  /** Remove a assinatura: o aluno volta a "sem plano". Idempotente. */
+  /**
+   * Remove a assinatura: o aluno volta a "sem plano". Idempotente. Se o aluno paga (ou já pagou) pelo app, a
+   * assinatura é ENCERRADA em vez de apagada — cancela no Asaas e mantém as cobranças (histórico fiscal).
+   */
   async remove(studentId: string, user: AuthUser): Promise<{ removed: boolean }> {
     await this.assertCanManageStudent(studentId, user);
+    const current = await this.prisma.subscription.findUnique({
+      where: { studentId },
+      select: { gatewaySubscriptionId: true, _count: { select: { gatewayPayments: true } } },
+    });
+    if (current && (current.gatewaySubscriptionId || current._count.gatewayPayments > 0)) {
+      return { removed: await this.endSubscription(studentId) };
+    }
     const { count } = await this.prisma.subscription.deleteMany({ where: { studentId } });
     return { removed: count > 0 };
+  }
+
+  /**
+   * Encerra a cobrança recorrente do aluno (coach removendo a assinatura, desvincular, excluir a conta): cancela no
+   * Asaas ANTES — se o Asaas recusar, nada muda aqui (nunca fica "cancelada" com o gateway ainda cobrando) — e marca
+   * CANCELED, mantendo o registro e as cobranças já feitas (histórico fiscal). Mesma trava por aluno do checkout.
+   * Devolve se havia algo a encerrar.
+   */
+  async endSubscription(studentId: string): Promise<boolean> {
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${studentId}))`;
+      const current = await tx.subscription.findUnique({
+        where: { studentId },
+        select: { status: true, gatewaySubscriptionId: true },
+      });
+      if (!current || current.status === SubscriptionStatus.CANCELED) return false;
+      if (current.gatewaySubscriptionId) await this.asaas.cancelSubscription(current.gatewaySubscriptionId);
+      await tx.subscription.update({
+        where: { studentId },
+        data: { status: SubscriptionStatus.CANCELED, canceledAt: new Date() },
+      });
+      return true;
+    }, { timeout: 15_000 });
   }
 
   /** O próprio aluno cancela a própria assinatura (fica CANCELED, não some — mantém histórico) e o coach é notificado. */
   async cancelMine(user: AuthUser) {
     const student = await this.prisma.student.findFirst({
-      where: { userId: user.id },
+      where: { userId: user.id, ...ACTIVE_STUDENT },
       select: { id: true, coachId: true, user: { select: { name: true } } },
     });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
@@ -170,7 +213,7 @@ export class SubscriptionsService {
    */
   async checkout(user: AuthUser, dto: CheckoutSubscriptionDto) {
     const student = await this.prisma.student.findFirst({
-      where: { userId: user.id },
+      where: { userId: user.id, ...ACTIVE_STUDENT },
       select: { id: true, coachId: true, cpf: true, asaasCustomerId: true, user: { select: { name: true, email: true } } },
     });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
@@ -188,12 +231,13 @@ export class SubscriptionsService {
 
       const current = await tx.subscription.findUnique({
         where: { studentId: student.id },
-        select: { gatewaySubscriptionId: true },
+        select: { gatewaySubscriptionId: true, status: true },
       });
       // Cancela a assinatura anterior no Asaas ANTES de criar/trocar — nunca deixa uma cobrança
       // recorrente órfã rodando por trás (troca de plano, retry, ou downgrade pro Free). Se o
       // cancelamento falhar, o checkout inteiro falha (fail-closed) em vez de arriscar duplicar cobrança.
-      if (current?.gatewaySubscriptionId) {
+      // Já cancelada (pelo aluno, pelo coach ou ao desvincular): não pede ao Asaas para cancelar de novo.
+      if (current?.gatewaySubscriptionId && current.status !== SubscriptionStatus.CANCELED) {
         await this.asaas.cancelSubscription(current.gatewaySubscriptionId);
       }
 
@@ -407,7 +451,7 @@ export class SubscriptionsService {
    * Sempre resolve o studentId a partir do userId do token (nunca aceita um id vindo do body/URL).
    */
   async listMyPayments(user: AuthUser) {
-    const student = await this.prisma.student.findFirst({ where: { userId: user.id }, select: { id: true } });
+    const student = await this.prisma.student.findFirst({ where: { userId: user.id, ...ACTIVE_STUDENT }, select: { id: true } });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
 
     return this.prisma.gatewayPayment.findMany({

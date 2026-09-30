@@ -4,6 +4,7 @@ import { StudentsService } from '../students/students.service';
 import { MovementsService } from '../movements/movements.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreatePersonalRecordDto } from './dto/create-personal-record.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -46,7 +47,7 @@ export class PersonalRecordsService {
 
     if (isNewLoadPr || isNewRepsPr) {
       const student = await this.prisma.student.findFirst({
-        where: { userId: athleteId },
+        where: { userId: athleteId, ...ACTIVE_STUDENT },
         select: { id: true, coachId: true },
       });
       if (student) {

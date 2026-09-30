@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StudentsService } from '../students/students.service';
 import { PlanAccessService } from '../subscriptions/plan-access.service';
 import { CheckoutWorkoutSessionDto } from './dto/checkout-workout-session.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -195,7 +196,7 @@ export class WorkoutSessionsService {
   /** Tempo médio de treino dos alunos do coach (últimos 30 dias). */
   async coachAvgDuration(coachId: string) {
     const students = await this.prisma.student.findMany({
-      where: { coachId },
+      where: { coachId, ...ACTIVE_STUDENT },
       select: { id: true, userId: true },
     });
 

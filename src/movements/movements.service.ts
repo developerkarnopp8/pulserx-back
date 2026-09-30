@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable 
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMovementDto } from './dto/create-movement.dto';
+import { ACTIVE_STUDENT } from '../common/student-scope';
 
 type AuthUser = { id: string; role: string };
 
@@ -148,7 +149,7 @@ export class MovementsService {
     }
     if (user.role === 'athlete') {
       const student = await this.prisma.student.findFirst({
-        where: { userId: user.id },
+        where: { userId: user.id, ...ACTIVE_STUDENT },
         select: { coachId: true },
       });
       const or: Prisma.MovementWhereInput[] = [global, { athleteId: user.id }];

@@ -28,6 +28,13 @@ describe('AuthService.validateUser', () => {
     expect(compareSpy).not.toHaveBeenCalled();
   });
 
+  it('conta excluída (anonimizada) → null, mesmo com a senha certa', async () => {
+    users.findByEmail.mockResolvedValue({ ...userRow, deletedAt: new Date() });
+    jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+
+    await expect(service.validateUser('ana@example.com', 'certa')).resolves.toBeNull();
+  });
+
   it('senha errada → null', async () => {
     users.findByEmail.mockResolvedValue(userRow);
     jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);

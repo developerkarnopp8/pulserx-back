@@ -8,7 +8,7 @@ function build(over: { settings?: any; total?: number; withoutAccess?: number } 
       upsert: jest.fn().mockResolvedValue({}),
     },
     student: {
-      count: jest.fn().mockImplementation(async (args?: any) => (args ? (over.withoutAccess ?? 0) : (over.total ?? 0))),
+      count: jest.fn().mockImplementation(async (args: any) => (args.where.OR ? (over.withoutAccess ?? 0) : (over.total ?? 0))),
     },
   };
   return { service: new PlatformSettingsService(prisma as any), prisma };
@@ -24,7 +24,10 @@ describe('PlatformSettingsService.get', () => {
   it('conta como "sem acesso" quem não tem assinatura, não está ACTIVE/TRIALING ou está com o teste vencido', async () => {
     const { service, prisma } = build({ settings: { enforceSubscriptionAccess: true } });
     await service.get();
-    const where = prisma.student.count.mock.calls.find(c => c[0])![0].where;
+    // Aluno desvinculado não conta (nem no total, nem nos sem acesso).
+    expect(prisma.student.count).toHaveBeenCalledWith({ where: { unlinkedAt: null } });
+    const where = prisma.student.count.mock.calls.find(c => c[0].where.OR)![0].where;
+    expect(where.unlinkedAt).toBeNull();
     expect(where.OR).toEqual([
       { subscription: null },
       { subscription: { status: { notIn: ['ACTIVE', 'TRIALING'] } } },
