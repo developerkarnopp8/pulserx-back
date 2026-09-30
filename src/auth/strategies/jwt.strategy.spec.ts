@@ -28,7 +28,7 @@ describe('JwtStrategy', () => {
     });
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { id: 'u1' },
-      select: { deletedAt: true, student: { select: { unlinkedAt: true } } },
+      select: { deletedAt: true, passwordChangedAt: true, student: { select: { unlinkedAt: true } } },
     });
     await expect(
       strategy.validate({ sub: 'u2', email: 'b@example.com', role: 'athlete', name: 'B', tv: '2026-09-30' }),
@@ -55,5 +55,39 @@ describe('JwtStrategy', () => {
   it('coach nunca é "unlinked" (o campo é só do vínculo do aluno)', async () => {
     const { strategy } = await build({ deletedAt: null, student: { unlinkedAt: new Date() } });
     await expect(strategy.validate({ sub: 'c1', role: 'coach' })).resolves.toMatchObject({ unlinked: false });
+  });
+});
+
+describe('JwtStrategy — senha trocada derruba a sessão', () => {
+  const OLD_ENV = process.env.JWT_SECRET;
+  afterEach(() => { process.env.JWT_SECRET = OLD_ENV; jest.resetModules(); });
+
+  async function build(conta: unknown) {
+    process.env.JWT_SECRET = 'segredo-de-teste';
+    jest.resetModules();
+    const { JwtStrategy } = await import('./jwt.strategy');
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(conta) } };
+    return new JwtStrategy({} as never, prisma as never);
+  }
+
+  const trocouEm = new Date('2026-09-30T12:00:00.500Z');
+  const segundos = Math.floor(trocouEm.getTime() / 1000);
+
+  it('token emitido ANTES da troca de senha: 401', async () => {
+    const s = await build({ deletedAt: null, passwordChangedAt: trocouEm, student: null });
+    await expect(s.validate({ sub: 'u1', role: 'athlete', iat: segundos - 1 })).rejects.toMatchObject({
+      status: 401, message: 'Sessão encerrada. Entre novamente.',
+    });
+  });
+
+  it('token emitido no mesmo segundo da troca ou depois (login novo): passa', async () => {
+    const s = await build({ deletedAt: null, passwordChangedAt: trocouEm, student: null });
+    await expect(s.validate({ sub: 'u1', role: 'athlete', iat: segundos })).resolves.toMatchObject({ id: 'u1' });
+    await expect(s.validate({ sub: 'u1', role: 'athlete', iat: segundos + 60 })).resolves.toMatchObject({ id: 'u1' });
+  });
+
+  it('senha nunca trocada: não interfere', async () => {
+    const s = await build({ deletedAt: null, passwordChangedAt: null, student: null });
+    await expect(s.validate({ sub: 'u1', role: 'coach', iat: 1 })).resolves.toMatchObject({ id: 'u1' });
   });
 });

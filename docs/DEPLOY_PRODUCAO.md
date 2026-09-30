@@ -32,6 +32,7 @@ usa `${VAR:?}` e para antes de trocar o container se faltar alguma):
 | `ASAAS_ENV` | `production` (cobrança real) ou `sandbox` (teste) |
 | `ASAAS_WEBHOOK_TOKEN` | um segredo longo gerado por você, o MESMO cadastrado no webhook do painel do Asaas |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | conta Cloudinary do PulseRx (fotos da landing) |
+| `APP_URL` | fica no próprio `docker-compose.prod.yml` (não é segredo): endereço dos links de senha/confirmação enviados por e-mail |
 | `RESEND_API_KEY`, `EMAIL_FROM` | conta Resend do PulseRx (e-mails; sem domínio verificado só entrega para o dono da conta) |
 
 Conferir sem mostrar valores: `grep -oE '^[A-Z_]+=' /opt/aevonfit/backend/.env`. Qualquer valor com `$` vai entre aspas simples.
