@@ -1,6 +1,6 @@
 import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { TERMS_VERSION } from '../../common/terms';
+import { COACH_TERMS_VERSION, TERMS_VERSION } from '../../common/terms';
 import { ALLOW_PENDING_TERMS_KEY } from '../decorators/allow-pending-terms.decorator';
 import { ALLOW_UNLINKED_KEY } from '../decorators/allow-unlinked.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -55,8 +55,8 @@ describe('JwtAuthGuard.handleRequest — aceite dos termos', () => {
     );
   });
 
-  it.each(['coach', 'admin'])('%s não depende das regras do aluno', (role) => {
-    const user = { role, tv: null, unlinked: true };
+  it('admin não depende de termo nenhum', () => {
+    const user = { role: 'admin', tv: null, unlinked: true };
     expect(guard().handleRequest(null, user, null, contexto())).toBe(user);
   });
 
@@ -83,5 +83,37 @@ describe('JwtAuthGuard.handleRequest — vínculo encerrado', () => {
   it('aluno com vínculo (unlinked false) segue normal', () => {
     const user = { role: 'athlete', tv: TERMS_VERSION, unlinked: false };
     expect(guard().handleRequest(null, user, null, contexto())).toBe(user);
+  });
+});
+
+describe('JwtAuthGuard.handleRequest — Termo do Coach', () => {
+  const COACH_PENDENTE = new ForbiddenException({
+    statusCode: 403,
+    code: 'COACH_TERMS_PENDING',
+    message: 'Aceite o Termo do Coach para continuar usando o painel.',
+  });
+
+  it('coach com o termo na versão atual: passa (e nunca cai nas regras do aluno)', () => {
+    const user = { role: 'coach', tv: COACH_TERMS_VERSION, unlinked: true };
+    expect(guard().handleRequest(null, user, null, contexto())).toBe(user);
+  });
+
+  it.each([null, undefined, '2026-09-30', 'coach-2026-01-01'])('coach com versão %s: 403 COACH_TERMS_PENDING', (tv) => {
+    expect(() => guard().handleRequest(null, { role: 'coach', tv }, null, contexto())).toThrow(COACH_PENDENTE);
+  });
+
+  it('a versão dos termos do ALUNO não vale como termo do coach', () => {
+    expect(() => guard().handleRequest(null, { role: 'coach', tv: TERMS_VERSION }, null, contexto())).toThrow(COACH_PENDENTE);
+  });
+
+  it('rota do termo (@AllowPendingTerms): coach pendente passa', () => {
+    const user = { role: 'coach', tv: null };
+    expect(guard(ALLOW_PENDING_TERMS_KEY).handleRequest(null, user, null, contexto())).toBe(user);
+  });
+
+  it('@AllowUnlinked não libera o coach pendente', () => {
+    expect(() => guard(ALLOW_UNLINKED_KEY).handleRequest(null, { role: 'coach', tv: null }, null, contexto())).toThrow(
+      COACH_PENDENTE,
+    );
   });
 });

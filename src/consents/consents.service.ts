@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuthService } from '../auth/auth.service';
-import { TERMS_VERSION } from '../common/terms';
+import { COACH_TERMS_VERSION, TERMS_VERSION } from '../common/terms';
 import { PrismaService } from '../prisma/prisma.service';
 import { scrubSkipText } from '../workout-skips/skip-message';
 
@@ -50,6 +50,29 @@ export class ConsentsService {
         data: { termsAcceptedAt: new Date(), termsVersion: TERMS_VERSION },
         select: CAMPOS_LOGIN,
       });
+    });
+    return this.auth.login(user);
+  }
+
+  async getCoachTerms(userId: string) {
+    const u = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { termsVersion: true, termsAcceptedAt: true },
+    });
+    const accepted = u.termsVersion === COACH_TERMS_VERSION;
+    return {
+      termsVersion: COACH_TERMS_VERSION,
+      accepted,
+      acceptedAt: accepted ? (u.termsAcceptedAt?.toISOString() ?? null) : null,
+    };
+  }
+
+  /** Grava o aceite do Termo do Coach (quando e qual versão) e devolve um token NOVO — o antigo segue barrado. */
+  async acceptCoachTerms(userId: string) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { termsAcceptedAt: new Date(), termsVersion: COACH_TERMS_VERSION },
+      select: CAMPOS_LOGIN,
     });
     return this.auth.login(user);
   }
