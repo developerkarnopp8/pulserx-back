@@ -94,6 +94,15 @@
 > Mudou o texto → trocar a versão. Validação: back 836 testes 100%, mutação 12/12, ataque ao vivo 22/22 (+ regressão do item 3 48/48),
 > security-analyst sem achados. Sem schema novo.
 
+> **Banco de produção — migrations (decisão do dono, 2026-09-30, branch `chore-migration-producao`):** de 26/09 a 30/09 o schema mudou
+> só por `db push` local e produção ficou 2 migrations atrás. Conferido na VPS (só leitura): produção tem 10 migrations aplicadas, checksums
+> iguais aos do repo e estrutura idêntica a elas. Criada **`20260930200000_landing_asaas_lgpd`** (tudo desde a migration 11, só aditivo),
+> gerada por `prisma migrate diff` entre o schema do commit da migration 11 e o atual e validada de 3 formas: 12 migrations do zero = schema
+> atual; migrations 11+12 sobre a estrutura de produção com dados fictícios (dados preservados); `prisma migrate deploy` real com o histórico
+> de produção → "up to date". **Regra daqui para frente: mudou o `schema.prisma`, gera migration no mesmo PR** — o job de CI "Migrations em
+> dia com o schema" falha se não gerar. Passo a passo de deploy (backup → rsync limpo → build → `migrate deploy` ANTES de trocar o container →
+> smoke) em **`docs/DEPLOY_PRODUCAO.md`**. Banco local: `npx prisma migrate resolve --applied <nome>` quando a mudança já foi aplicada por `db push`.
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.
