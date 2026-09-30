@@ -49,6 +49,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     createCustomer: jest.fn().mockResolvedValue({ id: 'cus_1' }),
     createSubscription: jest.fn().mockResolvedValue({ id: 'sub_asaas_1' }),
     cancelSubscription: jest.fn().mockResolvedValue(undefined),
+    getSubscriptionCard: jest.fn().mockResolvedValue({ brand: 'MASTERCARD', last4: '8829' }),
     listPaymentsBySubscription: jest.fn().mockResolvedValue([
       { id: 'pay_1', value: 149, netValue: 147.01, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' },
     ]),
@@ -253,11 +254,72 @@ describe('SubscriptionsService.endSubscription', () => {
 });
 
 describe('SubscriptionsService.getMine', () => {
-  it('devolve a assinatura do próprio aluno e as categorias que enxerga hoje', async () => {
-    const { service, prisma, access } = build({ current: { id: 'sub1' } });
-    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({ subscription: { id: 'sub1' }, categories: ['CORE'] });
+  it('assinatura manual (sem Asaas): devolve a assinatura e as categorias, sem cartão', async () => {
+    const { service, prisma, access, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: null } });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({
+      subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: null,
+    });
     expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', unlinkedAt: null }, select: { id: true } });
+    const calls = prisma.subscription.findUnique.mock.calls;
+    expect(calls[calls.length - 1][0].select.gatewaySubscriptionId).toBe(true);
     expect(access.getViewableCategories).toHaveBeenCalledWith('s1');
+    expect(asaas.getSubscriptionCard).not.toHaveBeenCalled();
+  });
+
+  it('paga pelo app: traz o cartão do débito automático e nunca o id da assinatura no Asaas', async () => {
+    const { service, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_9' } });
+    const r = await service.getMine({ id: 'u1', role: 'athlete' });
+    expect(asaas.getSubscriptionCard).toHaveBeenCalledWith('sub_asaas_9');
+    expect(r).toEqual({ subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: { brand: 'MASTERCARD', last4: '8829' } });
+    expect(JSON.stringify(r)).not.toContain('sub_asaas_9');
+  });
+
+  it('assinatura cancelada: não consulta o cartão', async () => {
+    const { service, asaas } = build({ current: { id: 'sub1', status: 'CANCELED', gatewaySubscriptionId: 'sub_asaas_9' } });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ autoDebitCard: null });
+    expect(asaas.getSubscriptionCard).not.toHaveBeenCalled();
+  });
+
+  it('Asaas fora do ar ou lento: a tela abre sem o cartão (nunca derruba)', async () => {
+    const { service, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_9' } });
+    asaas.getSubscriptionCard.mockRejectedValue(new Error('timeout'));
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ subscription: { id: 'sub1' }, autoDebitCard: null });
+  });
+
+  it('guarda o cartão por 10 min por assinatura: reabrir a tela não consulta o Asaas de novo', async () => {
+    const agora = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const { service, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_9' } });
+    await service.getMine({ id: 'u1', role: 'athlete' });
+    await service.getMine({ id: 'u1', role: 'athlete' });
+    expect(asaas.getSubscriptionCard).toHaveBeenCalledTimes(1);
+
+    agora.mockReturnValue(1_000_000 + 10 * 60 * 1000 + 1); // passou de 10 min: consulta de novo
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ autoDebitCard: { last4: '8829' } });
+    expect(asaas.getSubscriptionCard).toHaveBeenCalledTimes(2);
+    agora.mockRestore();
+  });
+
+  it('assinatura sem cartão (PIX/boleto) também fica guardada; falha do Asaas não fica (tenta de novo na próxima)', async () => {
+    const { service, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_9' } });
+    asaas.getSubscriptionCard.mockRejectedValueOnce(new Error('fora')).mockResolvedValue(null);
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ autoDebitCard: null });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ autoDebitCard: null });
+    await service.getMine({ id: 'u1', role: 'athlete' });
+    expect(asaas.getSubscriptionCard).toHaveBeenCalledTimes(2);
+  });
+
+  it('memória com teto: passou de 1000 assinaturas guardadas, começa do zero (não cresce sem limite)', async () => {
+    const { service } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_novo' } });
+    const cache = (service as any).cardCache as Map<string, unknown>;
+    for (let i = 0; i < 1000; i++) cache.set(`sub_${i}`, { card: null, expira: Number.MAX_SAFE_INTEGER });
+    await service.getMine({ id: 'u1', role: 'athlete' });
+    expect(cache.size).toBe(1);
+    expect(cache.has('sub_novo')).toBe(true);
+  });
+
+  it('sem assinatura: null em tudo', async () => {
+    const { service } = build({ current: null });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({ subscription: null, categories: ['CORE'], autoDebitCard: null });
   });
 
   it('usuário sem perfil de aluno → 404', async () => {

@@ -5,12 +5,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { CoachContractsService } from './coach-contracts.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { AsaasService } from '../common/asaas.service';
+import { AsaasService, SavedCard } from '../common/asaas.service';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { isValidCpf, onlyCpfDigits } from '../common/cpf';
 import { AssignSubscriptionDto, CheckoutSubscriptionDto } from './dto/subscription.dto';
 
 type AuthUser = { id: string; role: string };
+
+/** Memória do cartão do débito automático (ver `cardOf`). */
+const CARD_CACHE_TTL_MS = 10 * 60 * 1000;
+const CARD_CACHE_MAX = 1000;
 
 const SUBSCRIPTION_VIEW = {
   id: true,
@@ -29,6 +33,8 @@ const SUBSCRIPTION_VIEW = {
  */
 @Injectable()
 export class SubscriptionsService {
+  private readonly cardCache = new Map<string, { card: SavedCard | null; expira: number }>();
+
   constructor(
     private prisma: PrismaService,
     private access: SubscriptionAccessService,
@@ -56,15 +62,45 @@ export class SubscriptionsService {
     return this.prisma.subscription.findUnique({ where: { studentId }, select: SUBSCRIPTION_VIEW });
   }
 
-  /** O próprio aluno: a assinatura dele e o que ela libera hoje. */
+  /**
+   * O próprio aluno: a assinatura dele, o que ela libera hoje e, se paga no cartão, em qual cartão é o débito automático
+   * (só bandeira e final, consultados no Asaas na hora — o PulseRx não guarda dado de cartão).
+   */
   async getMine(user: AuthUser) {
     const student = await this.prisma.student.findFirst({ where: { userId: user.id, ...ACTIVE_STUDENT }, select: { id: true } });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
-    const [subscription, categories] = await Promise.all([
-      this.prisma.subscription.findUnique({ where: { studentId: student.id }, select: SUBSCRIPTION_VIEW }),
+    const [row, categories] = await Promise.all([
+      this.prisma.subscription.findUnique({
+        where: { studentId: student.id },
+        select: { ...SUBSCRIPTION_VIEW, gatewaySubscriptionId: true },
+      }),
       this.access.getViewableCategories(student.id),
     ]);
-    return { subscription, categories };
+    if (!row) return { subscription: null, categories, autoDebitCard: null };
+    // O id da assinatura no Asaas nunca vai para a resposta.
+    const { gatewaySubscriptionId, ...subscription } = row;
+    const ativa = gatewaySubscriptionId && subscription.status !== SubscriptionStatus.CANCELED;
+    // Falhou ou demorou no Asaas: a tela abre sem a linha do cartão (nunca derruba a tela da assinatura).
+    const autoDebitCard = ativa ? await this.cardOf(gatewaySubscriptionId) : null;
+    return { subscription, categories, autoDebitCard };
+  }
+
+  /**
+   * Cartão do débito automático com memória de 10 min por assinatura: abrir a tela várias vezes não vira várias consultas
+   * ao Asaas (cota da conta da plataforma). Falha não é guardada — a próxima abertura tenta de novo.
+   */
+  private async cardOf(gatewaySubscriptionId: string): Promise<SavedCard | null> {
+    const agora = Date.now();
+    const guardado = this.cardCache.get(gatewaySubscriptionId);
+    if (guardado && guardado.expira > agora) return guardado.card;
+    try {
+      const card = await this.asaas.getSubscriptionCard(gatewaySubscriptionId);
+      if (this.cardCache.size >= CARD_CACHE_MAX) this.cardCache.clear();
+      this.cardCache.set(gatewaySubscriptionId, { card, expira: agora + CARD_CACHE_TTL_MS });
+      return card;
+    } catch {
+      return null;
+    }
   }
 
   async assign(studentId: string, user: AuthUser, dto: AssignSubscriptionDto) {

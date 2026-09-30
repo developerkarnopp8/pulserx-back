@@ -164,6 +164,14 @@
 > que não criar a senha **não** é apagado (o coach reenvia o link). Validação: 928 testes 100%, mutação 7/7 (a 1ª rodada deixou sobreviver
 > "tirar o `unref`" — teste novo), ao vivo 7/7 no banco local (velha apagada + aviso do coach; recente, do coach e confirmadas ficam).
 
+> **Cartão com débito automático — opção A (decisão do dono, 2026-09-30; estudo em `docs/ESTUDO_CARTAO_ASAAS.md`):** a assinatura
+> continua `UNDEFINED` (aluno escolhe na fatura); pagar com cartão faz o Asaas guardar o cartão e cobrar as próximas sozinho (testado no
+> sandbox). `GET /subscriptions/me` ganhou `autoDebitCard` (`{brand, last4}` ou null): `AsaasService.getSubscriptionCard` consulta o
+> Asaas na hora (timeout 5 s, só bandeira + 4 dígitos, nunca token; o PulseRx **não grava** dado de cartão), só para assinatura própria não
+> cancelada; falha = null (a tela abre). Memória de 10 min por assinatura (`cardOf`, teto 1000) — achado Baixo do security-analyst
+> (consumo da cota do Asaas), corrigido no mesmo PR. O `gatewaySubscriptionId` nunca vai na resposta. **Ambiente de teste
+> (`aevonfit.aevon.online`) continua com o Asaas real — decisão do dono.**
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.

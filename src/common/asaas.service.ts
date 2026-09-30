@@ -21,6 +21,12 @@ export interface AsaasSubscription {
   status: string;
 }
 
+/** Cartão guardado na assinatura, só o que pode ser mostrado ao aluno (nunca número completo nem token). */
+export interface SavedCard {
+  brand: string;
+  last4: string;
+}
+
 export interface AsaasPayment {
   id: string;
   status: string;
@@ -114,6 +120,21 @@ export class AsaasService {
   async listPaymentsBySubscription(asaasSubscriptionId: string): Promise<AsaasPayment[]> {
     const result = await this.request<{ data: AsaasPayment[] }>(`/payments?subscription=${asaasSubscriptionId}`);
     return result.data;
+  }
+
+  /**
+   * Cartão em que a assinatura é debitada automaticamente (o Asaas guarda o cartão quando o aluno paga uma fatura
+   * com cartão — ver docs/ESTUDO_CARTAO_ASAAS.md). Devolve só bandeira e final; `null` se a assinatura não está no cartão.
+   * Consulta rápida (5 s): é só informativa, quem chama trata a falha.
+   */
+  async getSubscriptionCard(asaasSubscriptionId: string): Promise<SavedCard | null> {
+    const sub = await this.request<{ billingType?: string; creditCard?: { creditCardNumber?: string; creditCardBrand?: string } }>(
+      `/subscriptions/${asaasSubscriptionId}`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    const last4 = sub.creditCard?.creditCardNumber?.slice(-4);
+    if (sub.billingType !== 'CREDIT_CARD' || !last4 || !/^\d{4}$/.test(last4)) return null;
+    return { brand: sub.creditCard?.creditCardBrand ?? 'Cartão', last4 };
   }
 
   /** Reconsulta um pagamento específico — nunca confiar no corpo do webhook sem isso. */
