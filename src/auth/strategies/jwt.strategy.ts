@@ -34,9 +34,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: any) {
     const conta = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { deletedAt: true, student: { select: { unlinkedAt: true } } },
+      select: { deletedAt: true, passwordChangedAt: true, student: { select: { unlinkedAt: true } } },
     });
     if (!conta || conta.deletedAt) throw new UnauthorizedException('Sessão encerrada. Entre novamente.');
+    // Senha trocada depois de o token ser emitido (em segundos, como o `iat`): a sessão antiga cai.
+    if (conta.passwordChangedAt && payload.iat < Math.floor(conta.passwordChangedAt.getTime() / 1000)) {
+      throw new UnauthorizedException('Sessão encerrada. Entre novamente.');
+    }
     return {
       id: payload.sub,
       email: payload.email,

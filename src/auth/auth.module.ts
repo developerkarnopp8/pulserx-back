@@ -7,6 +7,9 @@ import { AuthController } from './auth.controller';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
+import { EmailService } from '../common/email.service';
+import { PasswordResetController } from './password-reset.controller';
+import { PasswordResetService } from './password-reset.service';
 
 export function buildJwtModuleOptions(configService: ConfigService) {
   const secret = configService.get<string>('JWT_SECRET');
@@ -35,8 +38,8 @@ export function buildJwtModuleOptions(configService: ConfigService) {
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, LocalStrategy, JwtStrategy],
-  exports: [AuthService],
+  controllers: [AuthController, PasswordResetController],
+  providers: [AuthService, LocalStrategy, JwtStrategy, PasswordResetService, EmailService],
+  exports: [AuthService, PasswordResetService],
 })
 export class AuthModule {}

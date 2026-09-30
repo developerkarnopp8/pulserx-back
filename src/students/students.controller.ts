@@ -1,8 +1,10 @@
 import {
-  Controller, Get, Post, Patch, Delete, Body, Param, Request, UseGuards,
+  Controller, Get, Post, Patch, Delete, Body, Param, Request, UseGuards, HttpCode,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { StudentsService } from './students.service';
+import { PasswordResetService } from '../auth/password-reset.service';
 import { CreateStudentDto, UpdateStudentDto } from './dto/create-student.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -13,7 +15,10 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('students')
 export class StudentsController {
-  constructor(private readonly studentsService: StudentsService) {}
+  constructor(
+    private readonly studentsService: StudentsService,
+    private readonly passwordReset: PasswordResetService,
+  ) {}
 
   @Get('me')
   @ApiOperation({ summary: 'Retorna o perfil de aluno do usuário autenticado (atleta)' })
@@ -52,6 +57,15 @@ export class StudentsController {
   @ApiOperation({ summary: 'Atualiza dados do aluno (somente o coach dono)' })
   update(@Param('id') id: string, @Body() dto: UpdateStudentDto, @Request() req: any) {
     return this.studentsService.update(id, req.user.id, dto);
+  }
+
+  @Roles('coach')
+  @Post(':id/password-reset')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
+  @ApiOperation({ summary: 'Envia ao aluno (do próprio coach) o link por e-mail para criar uma senha nova' })
+  sendPasswordReset(@Param('id') id: string, @Request() req: any) {
+    return this.passwordReset.sendStudentReset(id, req.user.id);
   }
 
   @Roles('coach')

@@ -34,6 +34,9 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:?defina RESEND_API_KEY no .env}
       EMAIL_FROM: ${EMAIL_FROM:?defina EMAIL_FROM no .env}
       PORT: 3000
+      # Endereço público do site, para os links enviados por e-mail (nunca vem do cabeçalho da requisição).
+      # Muda junto com a migração do domínio (pulserx.com.br).
+      APP_URL: https://aevonfit.aevon.online
     ports:
       - '127.0.0.1:4120:3000'
 

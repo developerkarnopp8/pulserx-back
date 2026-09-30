@@ -60,27 +60,30 @@ enum SessionType {
 }
 
 model User {
-  id              String    @id @default(uuid())
-  name            String
-  email           String    @unique
-  passwordHash    String
-  role            Role      @default(athlete)
-  aiImportEnabled Boolean   @default(true)
+  id                String    @id @default(uuid())
+  name              String
+  email             String    @unique
+  passwordHash      String
+  role              Role      @default(athlete)
+  aiImportEnabled   Boolean   @default(true)
   /// Aceite dos termos/privacidade na inscrição pública (evidência LGPD): quando e qual versão.
-  termsAcceptedAt DateTime?
-  termsVersion    String?
+  termsAcceptedAt   DateTime?
+  termsVersion      String?
   /// Consentimento para dados de saúde (LGPD Art. 11): null = não respondeu; false = não/retirou. Quando mudou por último.
-  healthConsent   Boolean?
-  healthConsentAt DateTime?
+  healthConsent     Boolean?
+  healthConsentAt   DateTime?
   /// Conta anonimizada a pedido do titular (LGPD Art. 18): nome/e-mail trocados, senha inutilizável, token recusado.
-  deletedAt       DateTime?
+  deletedAt         DateTime?
   /// Último login com senha (painel do admin, "uso por coach"). Registrado a partir de 2026-09-30; null = sem registro.
-  lastLoginAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  lastLoginAt       DateTime?
+  /// Última troca de senha: tokens emitidos ANTES disso são recusados (trocar a senha derruba as sessões abertas).
+  passwordChangedAt DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   // Relations
   student           Student?           @relation("UserStudent")
+  authTokens        AuthToken[]
   coachStudents     Student[]          @relation("CoachStudents")
   coachPlans        TrainingPlan[]     @relation("CoachPlans")
   workoutLogs       WorkoutLog[]
@@ -648,4 +651,28 @@ model Lead {
 
   @@index([coachId])
   @@map("leads")
+}
+
+/// Para que serve um link enviado por e-mail (decisões do dono, 2026-09-30).
+enum AuthTokenPurpose {
+  RESET_PASSWORD
+  SET_PASSWORD
+  VERIFY_EMAIL
+}
+
+/// Link de uso único enviado por e-mail (esqueci minha senha, crie sua senha, confirme seu e-mail). Guarda só o
+/// SHA-256 do token — o token em si só existe no e-mail.
+model AuthToken {
+  id        String           @id @default(uuid())
+  userId    String
+  purpose   AuthTokenPurpose
+  tokenHash String           @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("auth_tokens")
 }

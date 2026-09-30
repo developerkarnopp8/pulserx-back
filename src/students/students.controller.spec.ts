@@ -10,8 +10,9 @@ function build() {
     findByUserId: jest.fn(), findAll: jest.fn(), findOne: jest.fn(),
     getCurrentPlan: jest.fn(), create: jest.fn(), update: jest.fn(), unlink: jest.fn(),
   };
-  const controller = new StudentsController(service as unknown as StudentsService);
-  return { controller, service };
+  const passwordReset = { sendStudentReset: jest.fn().mockResolvedValue({ sent: true }) };
+  const controller = new StudentsController(service as unknown as StudentsService, passwordReset as never);
+  return { controller, service, passwordReset };
 }
 
 describe('StudentsController — guards', () => {
@@ -77,5 +78,14 @@ describe('StudentsController — delegação', () => {
     const { controller, service } = build();
     await controller.unlink('s1', { user: { id: 'coach-1' } });
     expect(service.unlink).toHaveBeenCalledWith('s1', 'coach-1');
+  });
+});
+
+describe('StudentsController — link de nova senha para o aluno', () => {
+  it('só coach; usa o coach do token e o aluno da URL', async () => {
+    const { controller, passwordReset } = build();
+    await expect(controller.sendPasswordReset('s1', { user: { id: 'coach-1' } })).resolves.toEqual({ sent: true });
+    expect(passwordReset.sendStudentReset).toHaveBeenCalledWith('s1', 'coach-1');
+    expect(Reflect.getMetadata(ROLES_KEY, StudentsController.prototype.sendPasswordReset)).toEqual(['coach']);
   });
 });

@@ -117,6 +117,25 @@
 > edição de plano). Lógica pura em `admin/coach-insights.ts`. Schema: `User.lastLoginAt` (gravado no login com senha — falha nunca bloqueia) e
 > `TrainingPlan.importedByAi` (marcado no pdf-import), migration `20260930201153_admin_uso_login_importacao` (aditiva). Antes de 30/09 = sem registro.
 
+> **Senha e e-mail (decisões do dono, 2026-09-30):** (1) **Esqueci minha senha** = link por e-mail, **uso único, vale 1 hora**; trocar a
+> senha derruba as sessões abertas; a resposta é sempre a mesma (não revela quem tem conta). (2) **Confirmação de e-mail BLOQUEIA a entrada**
+> até confirmar; **contas que já existem contam como confirmadas** (o bloqueio vale para as criadas depois do deploy). (3) Contas criadas pelo
+> **coach (aluno) e pelo admin (coach)** recebem e-mail **"crie sua senha"** (mesmo link do Esqueci minha senha) — criar a senha pelo link
+> confirma o e-mail; ninguém mais passa senha por WhatsApp. (4) **Coach reseta a senha do aluno enviando o link por e-mail.** (5) Redesign do
+> painel do coach espera os mockups; cartão com débito automático começa por um estudo do Asaas (sem código). **Tudo isso depende do domínio
+> verificado no Resend** (hoje só entrega ao dono da conta): o bloqueio da confirmação NÃO pode ir para produção antes do domínio.
+> Entrega: PR A (esqueci senha + reset pelo coach), PR B (confirmação + boas-vindas), C (estudo do cartão).
+>
+> **PR A — senha por e-mail (branch `feat-senha-por-email`):** tabela `auth_tokens` (finalidade RESET_PASSWORD/SET_PASSWORD/VERIFY_EMAIL,
+> só o SHA-256 do token, `expiresAt`, `usedAt`) e `User.passwordChangedAt` (migration `20260930203625_tokens_por_email`). `POST
+> /auth/forgot-password` (3/15 min por IP; resposta sempre igual; o envio roda em segundo plano para o tempo de resposta não revelar a conta),
+> `POST /auth/reset-password` (10/15 min; uso único com trava otimista; invalida os outros links; grava `passwordChangedAt`) e `POST
+> /students/:id/password-reset` (coach dono, vínculo ativo, 5/15 min). `JwtStrategy` recusa token com `iat` anterior à troca de senha. Link =
+> `${APP_URL}/redefinir-senha#token=…` (fragmento: não vai a log nem Referer); `APP_URL` vem da configuração, NUNCA do cabeçalho (em produção
+> fica no compose). Fora de produção o link também vai para o log (o Resend sem domínio verificado só entrega ao dono). Validação: 888 testes
+> 100%, mutação 9/9 (a 1ª rodada deixou sobreviver "esperar o envio antes de responder" — teste novo), ataque ao vivo 18/18. Baixo aceito:
+> alguém com vários IPs pode encher a caixa de uma vítima de e-mails de "nova senha" (limite é por IP).
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.
