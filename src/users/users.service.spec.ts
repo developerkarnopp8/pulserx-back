@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 function build() {
   const prisma = {
-    user: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
+    user: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn(), update: jest.fn().mockResolvedValue({ id: 'u1' }) },
   };
   const service = new UsersService(prisma as unknown as PrismaService);
   return { service, prisma };
@@ -47,5 +47,20 @@ describe('UsersService.findAll', () => {
     expect(prisma.user.findMany).toHaveBeenCalledWith({
       select: { id: true, name: true, email: true, role: true, createdAt: true },
     });
+  });
+});
+
+describe('UsersService.markLogin', () => {
+  it('grava a data do último login e não devolve dado nenhum do usuário', async () => {
+    const { service, prisma } = build();
+    const quando = new Date('2026-09-30T12:00:00Z');
+    await expect(service.markLogin('u1', quando)).resolves.toBeUndefined();
+    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { lastLoginAt: quando }, select: { id: true } });
+  });
+
+  it('usa a hora atual quando não recebe uma', async () => {
+    const { service, prisma } = build();
+    await service.markLogin('u1');
+    expect(prisma.user.update.mock.calls[0][0].data.lastLoginAt).toBeInstanceOf(Date);
   });
 });

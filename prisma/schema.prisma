@@ -74,6 +74,8 @@ model User {
   healthConsentAt DateTime?
   /// Conta anonimizada a pedido do titular (LGPD Art. 18): nome/e-mail trocados, senha inutilizável, token recusado.
   deletedAt       DateTime?
+  /// Último login com senha (painel do admin, "uso por coach"). Registrado a partir de 2026-09-30; null = sem registro.
+  lastLoginAt     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -105,23 +107,23 @@ model User {
 }
 
 model Student {
-  id                String   @id @default(uuid())
-  userId            String   @unique
+  id                String    @id @default(uuid())
+  userId            String    @unique
   coachId           String
   goal              String?
-  currentMonth      Int      @default(1)
-  currentWeek       Int      @default(1)
-  completionPercent Float    @default(0)
+  currentMonth      Int       @default(1)
+  currentWeek       Int       @default(1)
+  completionPercent Float     @default(0)
   /// Coletado só no momento do checkout de uma assinatura paga (nunca no cadastro) — exigido
   /// pelo gateway de pagamento (Asaas) pra criar o cliente que vai pagar.
-  cpf               String?  @unique
+  cpf               String?   @unique
   /// Id do "customer" do aluno no Asaas — criado uma vez, reusado entre trocas de plano.
   asaasCustomerId   String?
   /// Vínculo encerrado pelo coach ("desvincular") ou pela exclusão da conta: some das telas do coach e o aluno
   /// perde o acesso ao app. Os dados só são apagados/anonimizados a pedido do aluno (ou do admin).
   unlinkedAt        DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   // Relations
   user          User           @relation("UserStudent", fields: [userId], references: [id], onDelete: Cascade)
@@ -134,18 +136,20 @@ model Student {
 }
 
 model TrainingPlan {
-  id        String           @id @default(uuid())
+  id           String           @id @default(uuid())
   // Opcional desde a v2: plano SHARED (Core/LPO) pertence ao coach + categoria, não a um aluno.
-  studentId String?
-  coachId   String
-  category  TrainingCategory @default(PERFORMANCE)
-  scope     PlanScope        @default(INDIVIDUAL)
-  month     Int
-  startDate DateTime
-  title     String
-  published Boolean          @default(false)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  studentId    String?
+  coachId      String
+  category     TrainingCategory @default(PERFORMANCE)
+  scope        PlanScope        @default(INDIVIDUAL)
+  month        Int
+  startDate    DateTime
+  title        String
+  published    Boolean          @default(false)
+  /// Plano criado pela importação de PDF com IA (painel do admin). Registrado a partir de 2026-09-30.
+  importedByAi Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 
   // Relations
   student Student? @relation(fields: [studentId], references: [id], onDelete: Cascade)

@@ -6,7 +6,7 @@ import { JwtService } from '@nestjs/jwt';
 
 describe('AuthService.validateUser', () => {
   let service: AuthService;
-  let users: { findByEmail: jest.Mock };
+  let users: { findByEmail: jest.Mock; markLogin: jest.Mock };
   let jwt: { sign: jest.Mock };
 
   const userRow = {
@@ -15,7 +15,7 @@ describe('AuthService.validateUser', () => {
   };
 
   beforeEach(() => {
-    users = { findByEmail: jest.fn() };
+    users = { findByEmail: jest.fn(), markLogin: jest.fn().mockResolvedValue(undefined) };
     jwt = { sign: jest.fn().mockReturnValue('signed.jwt.token') };
     service = new AuthService(users as unknown as UsersService, jwt as unknown as JwtService);
   });
@@ -35,11 +35,22 @@ describe('AuthService.validateUser', () => {
     await expect(service.validateUser('ana@example.com', 'certa')).resolves.toBeNull();
   });
 
+  it('login certo registra o último acesso; falha ao registrar nunca impede a entrada', async () => {
+    users.findByEmail.mockResolvedValue(userRow);
+    jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+    await service.validateUser('ana@example.com', 'certa');
+    expect(users.markLogin).toHaveBeenCalledWith('u1');
+
+    users.markLogin.mockRejectedValue(new Error('banco fora'));
+    await expect(service.validateUser('ana@example.com', 'certa')).resolves.toMatchObject({ id: 'u1' });
+  });
+
   it('senha errada → null', async () => {
     users.findByEmail.mockResolvedValue(userRow);
     jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);
 
     await expect(service.validateUser('ana@example.com', 'errada')).resolves.toBeNull();
+    expect(users.markLogin).not.toHaveBeenCalled();
   });
 
   it('credenciais certas → devolve o usuário sem passwordHash', async () => {

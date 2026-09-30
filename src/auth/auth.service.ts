@@ -23,6 +23,9 @@ export class AuthService {
       return null;
     }
 
+    // Registro do último login (uso do painel do admin): falhar aqui nunca impede a pessoa de entrar.
+    await this.usersService.markLogin(user.id).catch(() => undefined);
+
     const { passwordHash, ...result } = user;
     return result;
   }

@@ -110,6 +110,12 @@
 > `listCoaches` calculava o repasse sobre o BRUTO e com o % ATUAL do contrato — agora usa a conta real (+ `gatewayFee`, `pendingBreakdown`).
 > Cobranças de alunos desvinculados/excluídos continuam contando (registro fiscal). PR 2 (depois): assinaturas/MRR por coach, alertas,
 > uso (com registro novo de último login e de planos importados por IA — decisão do dono).
+>
+> **PR 2 (branch `feat-admin-assinaturas-alertas-uso`):** `GET /admin/coaches` ganhou `subscriptions` (ativas/teste/inadimplentes/canceladas/
+> sem plano + MRR = ACTIVE+TRIALING, igual ao Financeiro do coach; só alunos ativos), `alerts` (`NO_CONTRACT` % ≤ 0, `NO_WALLET` sem
+> `gatewayAccountRef`, `PAGE_UNPUBLISHED`) e `usage` (planos, `importedByAi`, sessões `Completed` nos últimos 30 dias, `lastLoginAt`, última
+> edição de plano). Lógica pura em `admin/coach-insights.ts`. Schema: `User.lastLoginAt` (gravado no login com senha — falha nunca bloqueia) e
+> `TrainingPlan.importedByAi` (marcado no pdf-import), migration `20260930201153_admin_uso_login_importacao` (aditiva). Antes de 30/09 = sem registro.
 
 ## Visão Geral
 
