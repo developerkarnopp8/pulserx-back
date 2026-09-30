@@ -131,6 +131,35 @@ describe('AsaasService', () => {
     });
   });
 
+  describe('getSubscriptionCard — cartão do débito automático', () => {
+    it('assinatura no cartão: só bandeira e os 4 últimos dígitos (nunca token); consulta com limite de tempo', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, {
+        id: 'sub_1', billingType: 'CREDIT_CARD',
+        creditCard: { creditCardNumber: '8829', creditCardBrand: 'MASTERCARD', creditCardToken: 'tok_secreto' },
+      }));
+      const service = new AsaasService();
+
+      await expect(service.getSubscriptionCard('sub_1')).resolves.toEqual({ brand: 'MASTERCARD', last4: '8829' });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api-sandbox.asaas.com/v3/subscriptions/sub_1');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('número vindo com máscara: pega só o final; sem bandeira mostra "Cartão"', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { billingType: 'CREDIT_CARD', creditCard: { creditCardNumber: '**** 1234' } }));
+      await expect(new AsaasService().getSubscriptionCard('sub_1')).resolves.toEqual({ brand: 'Cartão', last4: '1234' });
+    });
+
+    it.each([
+      ['assinatura em PIX/boleto/indefinida', { billingType: 'UNDEFINED', creditCard: { creditCardNumber: '8829' } }],
+      ['no cartão mas sem cartão guardado', { billingType: 'CREDIT_CARD' }],
+      ['final que não é número', { billingType: 'CREDIT_CARD', creditCard: { creditCardNumber: 'abcd' } }],
+    ])('%s → null', async (_caso, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(200, body));
+      await expect(new AsaasService().getSubscriptionCard('sub_1')).resolves.toBeNull();
+    });
+  });
+
   describe('tratamento de erro', () => {
     it('erro 4xx: texto do Asaas NUNCA vai pro cliente (pode citar walletId/ids) — só pro log', async () => {
       fetchMock.mockResolvedValue(jsonResponse(400, { errors: [{ description: 'Wallet [00000000-0000] inexistente.' }] }));
