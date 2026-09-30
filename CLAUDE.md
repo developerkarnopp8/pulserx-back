@@ -83,6 +83,17 @@
 >   pagamento), socket aberto não cai (nada mais chega). Limitação: ex-aluno desvinculado não pode ser recadastrado com o mesmo e-mail.
 > - **Produção:** mais 2 colunas (`users.deletedAt`, `students.unlinkedAt`) na pendência de schema.
 
+> **LGPD item 4 — Termo do Coach (decisão do dono, 2026-09-30, branch `feat-lgpd-termo-coach`):** o painel fica **bloqueado até o coach
+> aceitar** a versão atual. `COACH_TERMS_VERSION = 'coach-2026-09-30'` (`common/terms.ts`), gravado no mesmo `User.termsVersion` com
+> prefixo próprio (a versão dos termos do aluno não vale para o coach). `JwtAuthGuard`: coach sem a versão no token → 403
+> `COACH_TERMS_PENDING` fora de `@AllowPendingTerms()`; admin não é barrado. `GET/PUT /coach-terms/me` (`consents/coach-terms.controller.ts`,
+> só coach; `PUT {acceptTerms: true}` grava data+versão e devolve token novo). Login do coach responde `termsPending`. Coach criado pelo admin
+> aceita no 1º acesso. **Texto = rascunho para revisão de advogado** (no front, `legal-content.ts`, doc `termo-coach`, página pública
+> `/termo-coach`): finalidade, sigilo, dados de saúde, segurança da conta, incidentes ("imediatamente" — sem prazo inventado), direitos dos
+> alunos, fim do vínculo, descumprimento, atualizações; **não afirma o papel LGPD de cada parte** (controlador/operador), decisão jurídica.
+> Mudou o texto → trocar a versão. Validação: back 836 testes 100%, mutação 12/12, ataque ao vivo 22/22 (+ regressão do item 3 48/48),
+> security-analyst sem achados. Sem schema novo.
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.

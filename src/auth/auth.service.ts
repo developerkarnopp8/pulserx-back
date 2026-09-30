@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
-import { TERMS_VERSION } from '../common/terms';
+import { COACH_TERMS_VERSION, TERMS_VERSION } from '../common/terms';
 
 @Injectable()
 export class AuthService {
@@ -51,6 +51,8 @@ export class AuthService {
               healthConsent: user.healthConsent ?? null,
             }
           : {}),
+        // Coach: o painel só abre depois de aceitar o Termo do Coach na versão atual.
+        ...(user.role === 'coach' ? { termsPending: user.termsVersion !== COACH_TERMS_VERSION } : {}),
       },
     };
   }

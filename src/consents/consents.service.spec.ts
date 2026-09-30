@@ -1,4 +1,4 @@
-import { TERMS_VERSION } from '../common/terms';
+import { COACH_TERMS_VERSION, TERMS_VERSION } from '../common/terms';
 import { ConsentsService } from './consents.service';
 
 const QUANDO = new Date('2026-09-30T12:00:00.000Z');
@@ -166,5 +166,38 @@ describe('ConsentsService.setHealth — retirar apaga o que é saúde (inclusive
     });
     expect(prisma.workoutSkip.updateMany).not.toHaveBeenCalled();
     expect(prisma.message.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('ConsentsService — Termo do Coach', () => {
+  it('getCoachTerms: diz a versão atual e se ESTE coach já aceitou (data só quando aceito)', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUniqueOrThrow.mockResolvedValueOnce({ termsVersion: COACH_TERMS_VERSION, termsAcceptedAt: QUANDO });
+    await expect(service.getCoachTerms('c1')).resolves.toEqual({
+      termsVersion: COACH_TERMS_VERSION, accepted: true, acceptedAt: QUANDO.toISOString(),
+    });
+    expect(prisma.user.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: 'c1' }, select: { termsVersion: true, termsAcceptedAt: true },
+    });
+
+    prisma.user.findUniqueOrThrow.mockResolvedValueOnce({ termsVersion: null, termsAcceptedAt: null });
+    await expect(service.getCoachTerms('c1')).resolves.toEqual({ termsVersion: COACH_TERMS_VERSION, accepted: false, acceptedAt: null });
+
+    // Aceite antigo (outra versão) não conta, nem mostra a data antiga.
+    prisma.user.findUniqueOrThrow.mockResolvedValueOnce({ termsVersion: 'coach-2026-01-01', termsAcceptedAt: QUANDO });
+    await expect(service.getCoachTerms('c1')).resolves.toMatchObject({ accepted: false, acceptedAt: null });
+
+    prisma.user.findUniqueOrThrow.mockResolvedValueOnce({ termsVersion: COACH_TERMS_VERSION, termsAcceptedAt: null });
+    await expect(service.getCoachTerms('c1')).resolves.toMatchObject({ accepted: true, acceptedAt: null });
+  });
+
+  it('acceptCoachTerms: grava quando e qual versão e devolve sessão NOVA', async () => {
+    const { service, prisma, auth } = build();
+    await expect(service.acceptCoachTerms('c1')).resolves.toEqual({ access_token: 'novo', user: { id: 'u1' } });
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'c1' },
+      data: { termsAcceptedAt: expect.any(Date), termsVersion: COACH_TERMS_VERSION },
+    }));
+    expect(auth.login).toHaveBeenCalledWith(expect.objectContaining({ termsVersion: COACH_TERMS_VERSION }));
   });
 });
