@@ -139,6 +139,36 @@ describe('WebhooksService.processPaymentEvent', () => {
     expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
   });
 
+  it('já estava paga (cartão: aprovado e depois "dinheiro caiu"): mantém a data da 1ª confirmação', async () => {
+    const { service, prisma, asaas } = build({ existingPayment: { subscriptionId: 'sub1', paidAt: new Date('2026-10-01T12:00:00Z') } });
+    asaas.getPayment.mockResolvedValue({ id: 'pay_1', status: 'RECEIVED', value: 149, netValue: 140, dueDate: '2026-10-01', invoiceUrl: 'x', subscription: 'sub_asaas_1' });
+
+    await service.processPaymentEvent('PAYMENT_RECEIVED', 'pay_1');
+
+    const { update } = prisma.gatewayPayment.upsert.mock.calls[0][0];
+    expect(update.status).toBe('paid');
+    expect(update).not.toHaveProperty('paidAt');
+  });
+
+  it.each([
+    ['REFUNDED', 'refunded'],
+    ['REFUND_REQUESTED', 'refunded'],
+    ['REFUND_IN_PROGRESS', 'refunded'],
+    ['CHARGEBACK_REQUESTED', 'chargeback'],
+    ['CHARGEBACK_DISPUTE', 'chargeback'],
+    ['AWAITING_CHARGEBACK_REVERSAL', 'chargeback'],
+  ])('%s → %s: sai dos totais recebidos, guarda a data antiga e não mexe na assinatura', async (asaasStatus, local) => {
+    const { service, prisma, asaas } = build({ existingPayment: { subscriptionId: 'sub1', paidAt: new Date('2026-10-01T12:00:00Z') } });
+    asaas.getPayment.mockResolvedValue({ id: 'pay_1', status: asaasStatus, value: 149, dueDate: '2026-10-01', invoiceUrl: 'x', subscription: 'sub_asaas_1' });
+
+    await service.processPaymentEvent('PAYMENT_UPDATED', 'pay_1');
+
+    const { update } = prisma.gatewayPayment.upsert.mock.calls[0][0];
+    expect(update.status).toBe(local);
+    expect(update).not.toHaveProperty('paidAt');
+    expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
   it('sempre grava o WebhookLog, sem nunca guardar o corpo cru do evento', async () => {
     const { service, prisma } = build({ existingPayment: { subscriptionId: 'sub1' } });
 
