@@ -12,23 +12,20 @@ function build() {
     subscriptionPlan: { findFirst: jest.fn().mockResolvedValue({ id: 'plan-1', name: 'Core' }) },
     user: {
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockImplementation(async ({ data }) => ({
-        id: 'u-new', name: data.name, email: data.email, role: data.role,
-        termsVersion: data.termsVersion, healthConsent: data.healthConsent,
-      })),
+      create: jest.fn().mockImplementation(async ({ data }) => ({ id: 'u-new', name: data.name, email: data.email })),
     },
     student: { create: jest.fn().mockResolvedValue({ id: 's-new' }) },
     $transaction: jest.fn(),
   };
   prisma.$transaction.mockImplementation((cb: any) => cb(prisma));
-  const auth = { login: jest.fn().mockImplementation(async (u: any) => ({ access_token: 'tok', user: u })) };
+  const verification = { sendVerification: jest.fn().mockResolvedValue(undefined) };
   const notifications = { create: jest.fn().mockResolvedValue({}) };
-  return { service: new PublicSignupService(prisma, auth as any, notifications as any), prisma, auth, notifications };
+  return { service: new PublicSignupService(prisma, verification as any, notifications as any), prisma, verification, notifications };
 }
 
 describe('PublicSignupService.signup', () => {
-  it('cria aluno vinculado ao coach DA PÁGINA, grava aceite dos termos, avisa o coach e sai logado', async () => {
-    const { service, prisma, auth, notifications } = build();
+  it('cria aluno vinculado ao coach DA PÁGINA, grava aceite dos termos, avisa o coach e manda a confirmação (sem sessão)', async () => {
+    const { service, prisma, verification, notifications } = build();
 
     const result = await service.signup('luan', dto);
 
@@ -43,10 +40,15 @@ describe('PublicSignupService.signup', () => {
     expect(await bcrypt.compare('senha-forte', data.passwordHash)).toBe(true);
     expect(prisma.student.create).toHaveBeenCalledWith({ data: { userId: 'u-new', coachId: 'coach-1' } });
     expect(notifications.create).toHaveBeenCalledWith('coach-1', 'new_student', 'Novo aluno pela sua página', 'Ana Souza se inscreveu no plano Core.', '/coach/students');
-    expect(auth.login).toHaveBeenCalledWith({
-      id: 'u-new', name: 'Ana Souza', email: 'ana@example.com', role: 'athlete', termsVersion: TERMS_VERSION, healthConsent: false,
-    });
-    expect(result).toMatchObject({ access_token: 'tok', planId: 'plan-1' });
+    // E-mail nasce sem confirmação: a conta só entra depois do link.
+    expect(data.emailVerifiedAt).toBeUndefined();
+    expect(prisma.user.create.mock.calls[0][0].select).toEqual({ id: true, name: true, email: true });
+    expect(verification.sendVerification).toHaveBeenCalledWith(
+      { id: 'u-new', name: 'Ana Souza', email: 'ana@example.com' },
+      { slug: 'luan', planId: 'plan-1' },
+    );
+    expect(result).toEqual({ pendingVerification: true, email: 'ana@example.com' });
+    expect(result).not.toHaveProperty('access_token');
   });
 
   it('marcou a caixa de saúde: consentimento gravado com a data', async () => {
@@ -99,6 +101,17 @@ describe('PublicSignupService.signup', () => {
   it('falha no aviso ao coach não derruba a inscrição', async () => {
     const { service, notifications } = build();
     notifications.create.mockRejectedValue(new Error('x'));
-    await expect(service.signup('luan', dto)).resolves.toMatchObject({ access_token: 'tok' });
+    await expect(service.signup('luan', dto)).resolves.toMatchObject({ pendingVerification: true });
+  });
+
+  it('falha ao gerar/enviar a confirmação: registra no log e a inscrição continua (pede outro link na entrada)', async () => {
+    const { service, verification } = build();
+    const erro = jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
+    verification.sendVerification.mockRejectedValue(new Error('banco fora'));
+    await expect(service.signup('luan', dto)).resolves.toMatchObject({ pendingVerification: true });
+    expect(erro).toHaveBeenCalledWith(expect.stringContaining('u-new'), expect.any(String));
+    verification.sendVerification.mockRejectedValue('falha crua');
+    await service.signup('luan', dto);
+    expect(erro).toHaveBeenLastCalledWith(expect.any(String), 'falha crua');
   });
 });

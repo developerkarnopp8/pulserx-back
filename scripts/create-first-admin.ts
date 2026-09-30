@@ -32,6 +32,7 @@ async function main() {
       name,
       email,
       passwordHash: await bcrypt.hash(password, 10),
+      emailVerifiedAt: new Date(), // criado por quem opera o servidor: não precisa confirmar
       role: 'admin',
     },
   });

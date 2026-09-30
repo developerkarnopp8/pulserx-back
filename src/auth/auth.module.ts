@@ -10,6 +10,9 @@ import { UsersModule } from '../users/users.module';
 import { EmailService } from '../common/email.service';
 import { PasswordResetController } from './password-reset.controller';
 import { PasswordResetService } from './password-reset.service';
+import { EmailVerificationController } from './email-verification.controller';
+import { EmailVerificationService } from './email-verification.service';
+import { UnverifiedCleanupService } from './unverified-cleanup.service';
 
 export function buildJwtModuleOptions(configService: ConfigService) {
   const secret = configService.get<string>('JWT_SECRET');
@@ -38,8 +41,10 @@ export function buildJwtModuleOptions(configService: ConfigService) {
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, PasswordResetController],
-  providers: [AuthService, LocalStrategy, JwtStrategy, PasswordResetService, EmailService],
-  exports: [AuthService, PasswordResetService],
+  controllers: [AuthController, PasswordResetController, EmailVerificationController],
+  providers: [
+    AuthService, LocalStrategy, JwtStrategy, PasswordResetService, EmailVerificationService, EmailService, UnverifiedCleanupService,
+  ],
+  exports: [AuthService, PasswordResetService, EmailVerificationService],
 })
 export class AuthModule {}

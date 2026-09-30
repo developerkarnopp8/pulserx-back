@@ -1,7 +1,8 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
-import { generateStrongPassword } from '../common/generate-strong-password';
+import { PasswordResetService } from '../auth/password-reset.service';
+import { unusablePassword } from '../auth/email-tokens';
 import { CreateCoachDto } from './dto/admin.dto';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { paymentBreakdown, sumBreakdowns } from '../subscriptions/payment-breakdown';
@@ -12,7 +13,12 @@ const TRINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private passwordReset: PasswordResetService,
+  ) {}
 
   /**
    * Lista coaches com o real por trás da governança da plataforma: % do contrato (só o admin define, por coach —
@@ -129,34 +135,43 @@ export class AdminService {
     }));
   }
 
-  async createCoach(dto: CreateCoachDto): Promise<{ id: string; name: string; email: string; password: string }> {
+  /**
+   * Coach novo SEM senha (decisão do dono, 2026-09-30): ele recebe por e-mail o link "crie sua senha" (7 dias); criar a
+   * senha confirma o e-mail. O admin não vê nem repassa senha.
+   */
+  async createCoach(dto: CreateCoachDto): Promise<{ id: string; name: string; email: string; welcomeSent: true }> {
     const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
     if (existing) throw new ConflictException('E-mail já cadastrado');
 
-    const password = generateStrongPassword();
     const coach = await this.prisma.user.create({
       data: {
         name: dto.name,
         email: dto.email,
-        passwordHash: await bcrypt.hash(password, 10),
+        passwordHash: await bcrypt.hash(unusablePassword(), 10),
         role: 'coach',
       },
+      select: { id: true, name: true, email: true },
     });
 
-    return { id: coach.id, name: coach.name, email: coach.email, password };
+    // Falha no envio não desfaz o cadastro: o admin reenvia pelo "Enviar link de nova senha".
+    await this.passwordReset
+      .sendWelcome(coach, { tipo: 'admin' })
+      .catch(err =>
+        this.logger.error(`Falha ao enviar o "crie sua senha" (coach ${coach.id})`, err instanceof Error ? err.stack : String(err)),
+      );
+    return { ...coach, welcomeSent: true };
   }
 
-  async resetCoachPassword(id: string): Promise<{ password: string }> {
-    const user = await this.prisma.user.findUnique({ where: { id }, select: { role: true } });
-    if (!user || user.role !== 'coach') throw new NotFoundException('Coach não encontrado');
-
-    const password = generateStrongPassword();
-    await this.prisma.user.update({
+  /** Admin manda ao coach o link de nova senha por e-mail (1 hora). A senha atual continua valendo até ele trocar. */
+  async resetCoachPassword(id: string): Promise<{ sent: true }> {
+    const user = await this.prisma.user.findUnique({
       where: { id },
-      data: { passwordHash: await bcrypt.hash(password, 10) },
+      select: { id: true, name: true, email: true, role: true, deletedAt: true },
     });
+    if (!user || user.role !== 'coach' || user.deletedAt) throw new NotFoundException('Coach não encontrado');
 
-    return { password };
+    await this.passwordReset.sendResetLink(user, 'admin');
+    return { sent: true };
   }
 
   async toggleCoachAi(id: string, aiImportEnabled: boolean): Promise<{ id: string; aiImportEnabled: boolean }> {

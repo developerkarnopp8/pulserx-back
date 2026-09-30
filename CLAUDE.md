@@ -135,6 +135,34 @@
 > fica no compose). Fora de produção o link também vai para o log (o Resend sem domínio verificado só entrega ao dono). Validação: 888 testes
 > 100%, mutação 9/9 (a 1ª rodada deixou sobreviver "esperar o envio antes de responder" — teste novo), ataque ao vivo 18/18. Baixo aceito:
 > alguém com vários IPs pode encher a caixa de uma vítima de e-mails de "nova senha" (limite é por IP).
+>
+> **PR B — confirmação de e-mail + boas-vindas (branch `feat-confirmar-email`, empilhada sobre a A):** `User.emailVerifiedAt`
+> (migration `20260930205619_email_confirmado`, que marca **todas as contas existentes como confirmadas** — decisão do dono). Login com
+> senha certa e e-mail não confirmado → 403 `EMAIL_NOT_VERIFIED` (senha errada continua 401: não revela a conta). **Inscrição pela landing
+> não devolve mais sessão**: responde `{pendingVerification, email}` e manda o link `${APP_URL}/confirmar-email#token=…&c=<slug>&plano=<id>`
+> (48 h, uso único; o front confirma só no clique — antivírus que abre links não gasta o link — e volta ao pagamento do plano). `POST
+> /auth/verify-email` (10/15 min; trava otimista; abre a sessão = prova de posse do e-mail, igual ao reset) e `POST
+> /auth/resend-verification` (3/15 min; resposta sempre igual; envio em segundo plano; link sem plano). **Coach cadastra aluno sem senha**
+> (`CreateStudentDto` sem `password` — mandar o campo dá 400; senha interna aleatória; e-mail "crie sua senha" de 7 dias, `SET_PASSWORD`;
+> `POST /students` com limite próprio de 20/h, porque cada cadastro manda e-mail). **Admin cria coach sem senha** (mesmo e-mail) e o "resetar
+> senha" do admin virou **"enviar link de nova senha"** (1 h; a senha atual vale até o coach trocar). Criar a senha por qualquer link confirma o
+> e-mail. Scripts (`seed`, `create-first-admin`, `seed-production`) criam contas já confirmadas. Helper `issueEmailToken` (`auth/email-tokens.ts`)
+> é a fonte única de criação de link. Validação: back 921 testes 100%, front 695; mutação back 14/14 (a 1ª rodada deixou sobreviver "senha fixa
+> no cadastro" — teste novo), front 6/6; ataque ao vivo 31/31 cruzado com o banco. **Ordem de deploy: back e front juntos** (o front antigo
+> mandaria `password` no cadastro de aluno → 400; a inscrição antiga esperaria sessão). security-analyst: 0 Crítico/Alto/Médio; 3 Baixos —
+> (1) pré-sequestro: quem se inscreve com o e-mail de outra pessoa escolhe a senha; se a vítima clicar em "Confirmar" (de uma inscrição que não
+> fez), a senha do atacante continua valendo — mitigação possível: criar a senha no próprio link de confirmação (**decisão do dono pendente**);
+> (2) cadastro de aluno sem limite próprio — **corrigido** (20/h); (3) contas nunca confirmadas ficavam para sempre — **corrigido** (abaixo).
+> Domínio `pulserx.com.br` verificado no Resend (2026-09-30); falta trocar `EMAIL_FROM` de produção no deploy.
+>
+> **Limpeza de inscrições não confirmadas (decisão do dono, 2026-09-30 — "ponto 3"):** `auth/unverified-cleanup.service.ts` roda DENTRO da API
+> (1 min depois de subir e a cada 6 h; `setTimeout`/`setInterval` com `unref`, sem dependência nova de agendador — produção tem um só
+> container; se um dia houver réplicas, a limpeza continua segura porque o delete é condicional, só roda repetida). Apaga (em lotes de 100) o
+> aluno com e-mail **não confirmado há mais de 7 dias** que **não** foi cadastrado pelo coach (nunca teve link `SET_PASSWORD`) e que não tem
+> assinatura, cobrança, plano de treino nem mensagens; o delete exige `emailVerifiedAt: null` (quem confirmou no meio do caminho fica) e
+> leva junto o aviso "Fulano se inscreveu" do coach (mesmo nome, até 10 min depois da conta). Log só com a contagem. Aluno cadastrado pelo coach
+> que não criar a senha **não** é apagado (o coach reenvia o link). Validação: 928 testes 100%, mutação 7/7 (a 1ª rodada deixou sobreviver
+> "tirar o `unref`" — teste novo), ao vivo 7/7 no banco local (velha apagada + aviso do coach; recente, do coach e confirmadas ficam).
 
 ## Visão Geral
 

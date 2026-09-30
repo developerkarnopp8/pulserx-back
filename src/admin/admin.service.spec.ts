@@ -1,13 +1,18 @@
+import * as bcrypt from 'bcrypt';
+import * as emailTokens from '../auth/email-tokens';
 import { Test } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PasswordResetService } from '../auth/password-reset.service';
 
 describe('AdminService', () => {
   let service: AdminService;
   let prisma: any;
+  let passwordReset: { sendWelcome: jest.Mock; sendResetLink: jest.Mock };
 
   beforeEach(async () => {
+    passwordReset = { sendWelcome: jest.fn().mockResolvedValue(undefined), sendResetLink: jest.fn().mockResolvedValue(undefined) };
     prisma = {
       user: {
         findMany: jest.fn().mockResolvedValue([
@@ -34,7 +39,11 @@ describe('AdminService', () => {
     };
 
     const module = await Test.createTestingModule({
-      providers: [AdminService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AdminService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: PasswordResetService, useValue: passwordReset },
+      ],
     }).compile();
     service = module.get(AdminService);
   });
@@ -202,17 +211,39 @@ describe('AdminService', () => {
     });
   });
 
-  it('cria coach novo com senha forte gerada, devolvida uma única vez', async () => {
+  it('cria coach novo SEM senha conhecida e manda o "crie sua senha" por e-mail (o admin não vê senha)', async () => {
     const result = await service.createCoach({ name: 'Nova Coach', email: 'nova@aevonfit.com' });
 
     expect(prisma.user.findFirst).toHaveBeenCalledWith({ where: { email: 'nova@aevonfit.com' } });
     const createCall = prisma.user.create.mock.calls[0][0];
     expect(createCall.data.role).toBe('coach');
     expect(createCall.data.email).toBe('nova@aevonfit.com');
-    expect(createCall.data.passwordHash).toBeDefined();
-    expect(createCall.data.passwordHash).not.toBe(result.password); // hash, nunca a senha em texto puro
-    expect(result.password.length).toBeGreaterThan(15);
-    expect(result.id).toBe('coach-2');
+    expect(createCall.data.passwordHash).toMatch(/^\$2[aby]\$10\$/);
+    expect(createCall.data.emailVerifiedAt).toBeUndefined();
+    expect(createCall.select).toEqual({ id: true, name: true, email: true });
+    expect(passwordReset.sendWelcome).toHaveBeenCalledWith(
+      { id: 'coach-2', name: 'Nova Coach', email: 'nova@aevonfit.com' },
+      { tipo: 'admin' },
+    );
+    expect(result).toEqual({ id: 'coach-2', name: 'Nova Coach', email: 'nova@aevonfit.com', welcomeSent: true });
+    expect(result).not.toHaveProperty('password');
+  });
+
+  it('a senha do coach novo é a aleatória de uso interno (ninguém conhece), nunca um valor fixo', async () => {
+    jest.spyOn(emailTokens, 'unusablePassword').mockReturnValue('aleatoria-de-teste-123');
+    await service.createCoach({ name: 'Nova Coach', email: 'nova@aevonfit.com' });
+    expect(await bcrypt.compare('aleatoria-de-teste-123', prisma.user.create.mock.calls[0][0].data.passwordHash)).toBe(true);
+    jest.restoreAllMocks();
+  });
+
+  it('falha no envio das boas-vindas não desfaz o cadastro (vai para o log)', async () => {
+    const erro = jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
+    passwordReset.sendWelcome.mockRejectedValue(new Error('banco fora'));
+    await expect(service.createCoach({ name: 'Nova Coach', email: 'nova@aevonfit.com' })).resolves.toMatchObject({ id: 'coach-2' });
+    expect(erro).toHaveBeenCalledWith(expect.stringContaining('coach-2'), expect.any(String));
+    passwordReset.sendWelcome.mockRejectedValue('falha crua');
+    await service.createCoach({ name: 'Nova Coach', email: 'nova@aevonfit.com' });
+    expect(erro).toHaveBeenLastCalledWith(expect.any(String), 'falha crua');
   });
 
   it('lança ConflictException se o e-mail já existe, sem criar nada', async () => {
@@ -222,28 +253,37 @@ describe('AdminService', () => {
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
-  it('reseta a senha de um coach existente, devolvendo a senha nova uma única vez', async () => {
-    const result = await service.resetCoachPassword('coach-1');
+  it('nova senha do coach: manda o link por e-mail e não mexe na senha atual', async () => {
+    const coach = { id: 'coach-1', name: 'Luan', email: 'luan@example.com', role: 'coach', deletedAt: null };
+    prisma.user.findUnique.mockResolvedValue(coach);
+    await expect(service.resetCoachPassword('coach-1')).resolves.toEqual({ sent: true });
 
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'coach-1' }, select: { role: true } });
-    const updateCall = prisma.user.update.mock.calls[0][0];
-    expect(updateCall.where).toEqual({ id: 'coach-1' });
-    expect(updateCall.data.passwordHash).toBeDefined();
-    expect(result.password.length).toBeGreaterThan(15);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'coach-1' },
+      select: { id: true, name: true, email: true, role: true, deletedAt: true },
+    });
+    expect(passwordReset.sendResetLink).toHaveBeenCalledWith(coach, 'admin');
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('coach com conta excluída: 404 e nenhum e-mail', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'coach-1', role: 'coach', deletedAt: new Date() });
+    await expect(service.resetCoachPassword('coach-1')).rejects.toThrow(NotFoundException);
+    expect(passwordReset.sendResetLink).not.toHaveBeenCalled();
   });
 
   it('lança NotFoundException ao resetar senha de coach que não existe', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
 
     await expect(service.resetCoachPassword('inexistente')).rejects.toThrow(NotFoundException);
-    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(passwordReset.sendResetLink).not.toHaveBeenCalled();
   });
 
   it('lança NotFoundException ao resetar senha de usuário que não é coach', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'athlete-1', role: 'athlete' });
 
     await expect(service.resetCoachPassword('athlete-1')).rejects.toThrow(NotFoundException);
-    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(passwordReset.sendResetLink).not.toHaveBeenCalled();
   });
 
   it('liga/desliga aiImportEnabled de um coach', async () => {

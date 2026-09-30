@@ -47,7 +47,9 @@ export class StudentsController {
 
   @Roles('coach')
   @Post()
-  @ApiOperation({ summary: 'Cria aluno vinculado a um coach' })
+  // Cada cadastro manda um e-mail "crie sua senha": limite próprio protege a reputação do domínio de e-mail.
+  @Throttle({ default: { limit: 20, ttl: 3_600_000 } })
+  @ApiOperation({ summary: 'Cria aluno vinculado a um coach (ele recebe o link para criar a senha)' })
   create(@Request() req: any, @Body() dto: CreateStudentDto) {
     return this.studentsService.create(req.user.id, dto);
   }

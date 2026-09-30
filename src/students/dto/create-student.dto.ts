@@ -1,6 +1,7 @@
-import { IsString, IsOptional, IsNumber, IsEmail, MinLength } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsEmail } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+/** Sem senha: o aluno cria a própria pelo link "crie sua senha" que chega por e-mail. */
 export class CreateStudentDto {
   @ApiProperty({ example: 'Gustavo Karnopp' })
   @IsString()
@@ -9,11 +10,6 @@ export class CreateStudentDto {
   @ApiProperty({ example: 'gustavo@email.com' })
   @IsEmail()
   email: string;
-
-  @ApiProperty({ description: 'Senha de acesso do atleta', minLength: 6 })
-  @IsString()
-  @MinLength(6)
-  password: string;
 
   @ApiPropertyOptional({ example: 'Competição CrossFit' })
   @IsString()

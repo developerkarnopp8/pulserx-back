@@ -89,3 +89,10 @@ describe('StudentsController — link de nova senha para o aluno', () => {
     expect(Reflect.getMetadata(ROLES_KEY, StudentsController.prototype.sendPasswordReset)).toEqual(['coach']);
   });
 });
+
+describe('StudentsController — cadastro manda e-mail, então tem limite próprio', () => {
+  it('20 cadastros por hora', () => {
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', StudentsController.prototype.create)).toBe(20);
+    expect(Reflect.getMetadata('THROTTLER:TTLdefault', StudentsController.prototype.create)).toBe(3_600_000);
+  });
+});

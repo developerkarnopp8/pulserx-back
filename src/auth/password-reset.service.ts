@@ -6,14 +6,17 @@ import { EmailService } from '../common/email.service';
 import { escapeHtml } from '../common/escape-html';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { PrismaService } from '../prisma/prisma.service';
-import { hashEmailToken, newEmailToken, RESET_PASSWORD_TTL_MS } from './email-tokens';
+import { hashEmailToken, issueEmailToken, RESET_PASSWORD_TTL_MS, SET_PASSWORD_TTL_MS } from './email-tokens';
+
+type Destinatario = { id: string; name: string; email: string };
 
 const LINK_INVALIDO = 'Link inválido ou expirado. Peça um novo em "Esqueci minha senha".';
 
 /**
- * Senha por link no e-mail (decisões do dono, 2026-09-30): "Esqueci minha senha" e o coach mandando o link ao aluno.
- * Link de uso único, vale 1 hora; pedir outro invalida o anterior; trocar a senha derruba as sessões abertas
- * (`passwordChangedAt`, conferido pelo JwtStrategy). O banco guarda só o hash do token.
+ * Senha por link no e-mail (decisões do dono, 2026-09-30): "Esqueci minha senha", o coach mandando o link ao aluno, o admin
+ * mandando ao coach e o "crie sua senha" de quem teve a conta criada por outra pessoa. Link de uso único; pedir outro invalida o
+ * anterior; trocar a senha derruba as sessões abertas (`passwordChangedAt`, conferido pelo JwtStrategy) e confirma o e-mail (quem
+ * abriu o link recebeu o e-mail). O banco guarda só o hash do token.
  */
 @Injectable()
 export class PasswordResetService {
@@ -34,7 +37,7 @@ export class PasswordResetService {
       select: { id: true, name: true, email: true },
     });
     if (!user) return;
-    void this.issueAndSend(user, 'self').catch(err =>
+    void this.sendResetLink(user, 'self').catch(err =>
       this.logger.error(`Falha ao enviar o link de nova senha (usuário ${user.id})`, err instanceof Error ? err.stack : String(err)),
     );
   }
@@ -48,7 +51,7 @@ export class PasswordResetService {
     if (!student || student.coachId !== coachId || student.user.deletedAt) {
       throw new NotFoundException('Aluno não encontrado');
     }
-    await this.issueAndSend(student.user, 'coach');
+    await this.sendResetLink(student.user, 'coach');
     return { sent: true };
   }
 
@@ -57,7 +60,7 @@ export class PasswordResetService {
     const now = new Date();
     const found = await this.prisma.authToken.findUnique({
       where: { tokenHash: hashEmailToken(token) },
-      select: { id: true, userId: true, purpose: true, expiresAt: true, usedAt: true, user: { select: { deletedAt: true } } },
+      select: { id: true, userId: true, purpose: true, expiresAt: true, usedAt: true, user: { select: { deletedAt: true, emailVerifiedAt: true } } },
     });
     const valido =
       found &&
@@ -72,7 +75,12 @@ export class PasswordResetService {
       // Trava otimista: dois envios do mesmo link ao mesmo tempo → só um troca a senha.
       const { count } = await tx.authToken.updateMany({ where: { id: found.id, usedAt: null }, data: { usedAt: now } });
       if (count === 0) throw new BadRequestException(LINK_INVALIDO);
-      await tx.user.update({ where: { id: found.userId }, data: { passwordHash, passwordChangedAt: now }, select: { id: true } });
+      await tx.user.update({
+        where: { id: found.userId },
+        // Criar a senha pelo link prova que a pessoa recebe e-mail nesse endereço: vale como confirmação.
+        data: { passwordHash, passwordChangedAt: now, ...(found.user.emailVerifiedAt ? {} : { emailVerifiedAt: now }) },
+        select: { id: true },
+      });
       // Qualquer outro link de senha ainda aberto deixa de valer.
       await tx.authToken.updateMany({
         where: {
@@ -86,41 +94,49 @@ export class PasswordResetService {
     return { reset: true };
   }
 
-  /** Invalida os links de senha abertos, cria um novo e envia. */
-  private async issueAndSend(user: { id: string; name: string; email: string }, quemPediu: 'self' | 'coach'): Promise<void> {
-    const { token, tokenHash } = newEmailToken();
-    const now = new Date();
-    await this.prisma.$transaction([
-      this.prisma.authToken.updateMany({
-        where: { userId: user.id, usedAt: null, purpose: AuthTokenPurpose.RESET_PASSWORD },
-        data: { usedAt: now },
-      }),
-      this.prisma.authToken.create({
-        data: {
-          userId: user.id,
-          purpose: AuthTokenPurpose.RESET_PASSWORD,
-          tokenHash,
-          expiresAt: new Date(now.getTime() + RESET_PASSWORD_TTL_MS),
-        },
-        select: { id: true },
-      }),
-    ]);
-
+  /** Link de nova senha (1 hora). Invalida os links de nova senha abertos. */
+  async sendResetLink(user: Destinatario, quemPediu: 'self' | 'coach' | 'admin'): Promise<void> {
+    const token = await issueEmailToken(this.prisma, user.id, AuthTokenPurpose.RESET_PASSWORD, RESET_PASSWORD_TTL_MS);
     // Token no fragmento (#): não vai para log de servidor nem no cabeçalho Referer.
     const link = `${appUrl()}/redefinir-senha#token=${token}`;
-    const nome = escapeHtml(user.name);
-    const motivo =
-      quemPediu === 'coach'
-        ? 'Seu treinador pediu uma nova senha para a sua conta no PulseRx.'
-        : 'Recebemos um pedido para trocar a senha da sua conta no PulseRx.';
+    const motivo = {
+      self: 'Recebemos um pedido para trocar a senha da sua conta no PulseRx.',
+      coach: 'Seu treinador pediu uma nova senha para a sua conta no PulseRx.',
+      admin: 'A equipe do PulseRx enviou um link para você criar uma nova senha.',
+    }[quemPediu];
     await this.email.send(
       user.email,
       'Crie uma nova senha — PulseRx',
-      `<p>Olá, ${nome}.</p><p>${motivo}</p>` +
+      `<p>Olá, ${escapeHtml(user.name)}.</p><p>${motivo}</p>` +
         `<p><a href="${link}">Criar nova senha</a></p>` +
         '<p>O link vale 1 hora e só pode ser usado uma vez. Se você não pediu, ignore este e-mail — sua senha continua a mesma.</p>',
     );
-    // Sem domínio verificado no Resend o e-mail só chega ao dono da conta: fora de produção, o link vai para o log.
-    if (process.env.NODE_ENV !== 'production') this.logger.log(`[dev] link de nova senha de ${user.email}: ${link}`);
+    this.devLog(`link de nova senha de ${user.email}: ${link}`);
+  }
+
+  /**
+   * Boas-vindas de quem teve a conta criada por outra pessoa (aluno pelo coach, coach pelo admin): link "crie sua senha", 7 dias.
+   * Ninguém mais combina senha por WhatsApp. Se o link vencer, "Esqueci minha senha" (ou o coach) manda outro.
+   */
+  async sendWelcome(user: Destinatario, criadoPor: { tipo: 'coach'; nome: string } | { tipo: 'admin' }): Promise<void> {
+    const token = await issueEmailToken(this.prisma, user.id, AuthTokenPurpose.SET_PASSWORD, SET_PASSWORD_TTL_MS);
+    const link = `${appUrl()}/redefinir-senha#token=${token}`;
+    const quem =
+      criadoPor.tipo === 'coach'
+        ? `Seu treinador ${escapeHtml(criadoPor.nome)} criou a sua conta no PulseRx.`
+        : 'A equipe do PulseRx criou a sua conta de treinador.';
+    await this.email.send(
+      user.email,
+      'Crie sua senha — PulseRx',
+      `<p>Olá, ${escapeHtml(user.name)}.</p><p>${quem}</p>` +
+        `<p><a href="${link}">Criar minha senha</a></p>` +
+        '<p>O link vale 7 dias e só pode ser usado uma vez. Se venceu, use "Esqueci minha senha" na tela de entrada.</p>',
+    );
+    this.devLog(`link de criar senha de ${user.email}: ${link}`);
+  }
+
+  /** Sem domínio verificado no Resend o e-mail só chega ao dono da conta: fora de produção, o link vai para o log. */
+  private devLog(msg: string): void {
+    if (process.env.NODE_ENV !== 'production') this.logger.log(`[dev] ${msg}`);
   }
 }

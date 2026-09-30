@@ -78,6 +78,9 @@ model User {
   lastLoginAt       DateTime?
   /// Última troca de senha: tokens emitidos ANTES disso são recusados (trocar a senha derruba as sessões abertas).
   passwordChangedAt DateTime?
+  /// E-mail confirmado (link de confirmação ou criação de senha pelo link). null = não confirmado → não entra. Contas que já existiam
+  /// antes de 2026-09-30 foram marcadas como confirmadas na migration (decisão do dono).
+  emailVerifiedAt   DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

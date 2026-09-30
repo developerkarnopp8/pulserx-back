@@ -58,7 +58,7 @@ export class AdminController {
   }
 
   @Post('coaches/:id/reset-password')
-  @ApiOperation({ summary: 'Gera senha nova pro coach' })
+  @ApiOperation({ summary: 'Envia ao coach o link de nova senha por e-mail (1 hora)' })
   resetPassword(@Param('id') id: string) {
     return this.service.resetCoachPassword(id);
   }

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
@@ -21,6 +21,16 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       return null;
+    }
+
+    // E-mail não confirmado (conta nova da landing, ou criada por outra pessoa): só depois da senha certa, para não revelar
+    // a quem não sabe a senha que o e-mail tem conta. O front oferece reenviar a confirmação.
+    if (!user.emailVerifiedAt) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Confirme seu e-mail para entrar. Enviamos um link para a sua caixa de entrada.',
+      });
     }
 
     // Registro do último login (uso do painel do admin): falhar aqui nunca impede a pessoa de entrar.

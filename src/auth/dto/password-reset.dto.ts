@@ -20,3 +20,10 @@ export class ResetPasswordDto {
   @MaxLength(100)
   password!: string;
 }
+
+export class VerifyEmailDto {
+  @ApiProperty({ description: 'Token do link de confirmação recebido por e-mail' })
+  @IsString()
+  @Length(20, 200, { message: 'Link inválido ou expirado. Peça um novo.' })
+  token!: string;
+}
