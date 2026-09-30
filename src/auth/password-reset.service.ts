@@ -86,7 +86,8 @@ export class PasswordResetService {
         where: {
           userId: found.userId,
           usedAt: null,
-          purpose: { in: [AuthTokenPurpose.RESET_PASSWORD, AuthTokenPurpose.SET_PASSWORD] },
+          // Inclui a confirmação: a conta ficou confirmada aqui e o link de confirmação não pode trocar a senha de novo.
+          purpose: { in: [AuthTokenPurpose.RESET_PASSWORD, AuthTokenPurpose.SET_PASSWORD, AuthTokenPurpose.VERIFY_EMAIL] },
         },
         data: { usedAt: now },
       });

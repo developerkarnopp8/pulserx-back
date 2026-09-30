@@ -1,3 +1,4 @@
+import * as bcrypt from 'bcrypt';
 import { hashEmailToken } from './email-tokens';
 import { EmailVerificationService } from './email-verification.service';
 
@@ -8,7 +9,7 @@ function build() {
   const prisma: any = {
     user: {
       findFirst: jest.fn().mockResolvedValue(ana),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      update: jest.fn().mockResolvedValue({ id: 'u1' }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'u1', role: 'athlete' }),
     },
     authToken: {
@@ -45,7 +46,7 @@ describe('EmailVerificationService.sendVerification', () => {
 
     const [para, assunto, html] = email.send.mock.calls[0];
     expect(para).toBe('ana@example.com');
-    expect(assunto).toBe('Confirme seu e-mail — PulseRx');
+    expect(assunto).toBe('Confirme seu e-mail e crie sua senha — PulseRx');
     expect(html).toContain('Olá, Ana &lt;b&gt;.');
     const m = /href="http:\/\/localhost:4200\/confirmar-email#token=([A-Za-z0-9_-]{43})&c=luan-teste&plano=plan-1"/.exec(html);
     expect(m).not.toBeNull();
@@ -128,17 +129,19 @@ describe('EmailVerificationService.verify', () => {
     id: 't1', userId: 'u1', purpose: 'VERIFY_EMAIL', expiresAt: futuro(), usedAt: null, user: { deletedAt: null }, ...over,
   });
 
-  it('link válido: gasta o link, confirma o e-mail (só se ainda não confirmado) e abre a sessão', async () => {
+  it('link válido: gasta o link, grava a senha criada agora, confirma o e-mail, invalida os outros links e abre a sessão', async () => {
     const { service, prisma, auth } = build();
     prisma.authToken.findUnique.mockResolvedValue(valido());
-    await expect(service.verify(TOKEN)).resolves.toEqual({ access_token: 'sessao' });
+    await expect(service.verify(TOKEN, 'senha-nova-123')).resolves.toEqual({ access_token: 'sessao' });
 
     expect(prisma.authToken.findUnique.mock.calls[0][0].where).toEqual({ tokenHash: hashEmailToken(TOKEN) });
-    expect(prisma.authToken.updateMany).toHaveBeenCalledWith({ where: { id: 't1', usedAt: null }, data: { usedAt: expect.any(Date) } });
-    expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: 'u1', emailVerifiedAt: null },
-      data: { emailVerifiedAt: expect.any(Date) },
-    });
+    expect(prisma.authToken.updateMany).toHaveBeenNthCalledWith(1, { where: { id: 't1', usedAt: null }, data: { usedAt: expect.any(Date) } });
+    const upd = prisma.user.update.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: 'u1' });
+    expect(await bcrypt.compare('senha-nova-123', upd.data.passwordHash)).toBe(true);
+    expect(upd.data.emailVerifiedAt).toBeInstanceOf(Date);
+    expect(upd.data.passwordChangedAt).toBe(upd.data.emailVerifiedAt);
+    expect(prisma.authToken.updateMany).toHaveBeenNthCalledWith(2, { where: { userId: 'u1', usedAt: null }, data: { usedAt: expect.any(Date) } });
     expect(prisma.user.findUniqueOrThrow).toHaveBeenCalledWith({
       where: { id: 'u1' },
       select: { id: true, name: true, email: true, role: true, termsVersion: true, healthConsent: true },
@@ -156,8 +159,8 @@ describe('EmailVerificationService.verify', () => {
   ])('link %s: 400, nada muda, sem sessão', async (_caso, token) => {
     const { service, prisma, auth } = build();
     prisma.authToken.findUnique.mockResolvedValue(token);
-    await expect(service.verify(TOKEN)).rejects.toThrow('Link inválido ou expirado');
-    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    await expect(service.verify(TOKEN, 'senha-nova-123')).rejects.toThrow('Link inválido ou expirado');
+    expect(prisma.user.update).not.toHaveBeenCalled();
     expect(auth.login).not.toHaveBeenCalled();
   });
 
@@ -165,8 +168,8 @@ describe('EmailVerificationService.verify', () => {
     const { service, prisma, auth } = build();
     prisma.authToken.findUnique.mockResolvedValue(valido());
     prisma.authToken.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(service.verify(TOKEN)).rejects.toThrow('Link inválido ou expirado');
-    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    await expect(service.verify(TOKEN, 'senha-nova-123')).rejects.toThrow('Link inválido ou expirado');
+    expect(prisma.user.update).not.toHaveBeenCalled();
     expect(auth.login).not.toHaveBeenCalled();
   });
 });

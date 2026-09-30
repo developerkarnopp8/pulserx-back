@@ -1,10 +1,11 @@
+import * as emailTokens from '../auth/email-tokens';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { TERMS_VERSION } from '../common/terms';
 import { PublicSignupService } from './public-signup.service';
 
-const dto = { name: 'Ana Souza', email: 'ana@example.com', password: 'senha-forte', planId: 'plan-1', acceptTerms: true as const };
+const dto = { name: 'Ana Souza', email: 'ana@example.com', planId: 'plan-1', acceptTerms: true as const };
 
 function build() {
   const prisma: any = {
@@ -37,7 +38,8 @@ describe('PublicSignupService.signup', () => {
     expect(data).toMatchObject({ name: 'Ana Souza', email: 'ana@example.com', role: 'athlete', termsVersion: TERMS_VERSION, healthConsent: false });
     expect(data.termsAcceptedAt).toBeInstanceOf(Date);
     expect(data.healthConsentAt).toBeInstanceOf(Date);
-    expect(await bcrypt.compare('senha-forte', data.passwordHash)).toBe(true);
+    // Sem senha na inscrição: a conta nasce com uma senha que ninguém conhece (a de verdade é criada no link).
+    expect(data.passwordHash).toMatch(/^\$2[aby]\$10\$/);
     expect(prisma.student.create).toHaveBeenCalledWith({ data: { userId: 'u-new', coachId: 'coach-1' } });
     expect(notifications.create).toHaveBeenCalledWith('coach-1', 'new_student', 'Novo aluno pela sua página', 'Ana Souza se inscreveu no plano Core.', '/coach/students');
     // E-mail nasce sem confirmação: a conta só entra depois do link.
@@ -49,6 +51,14 @@ describe('PublicSignupService.signup', () => {
     );
     expect(result).toEqual({ pendingVerification: true, email: 'ana@example.com' });
     expect(result).not.toHaveProperty('access_token');
+  });
+
+  it('a senha da conta nova é a aleatória de uso interno (ninguém conhece), nunca um valor fixo', async () => {
+    const { service, prisma } = build();
+    jest.spyOn(emailTokens, 'unusablePassword').mockReturnValue('aleatoria-de-teste-123');
+    await service.signup('luan', dto);
+    expect(await bcrypt.compare('aleatoria-de-teste-123', prisma.user.create.mock.calls[0][0].data.passwordHash)).toBe(true);
+    jest.restoreAllMocks();
   });
 
   it('marcou a caixa de saúde: consentimento gravado com a data', async () => {

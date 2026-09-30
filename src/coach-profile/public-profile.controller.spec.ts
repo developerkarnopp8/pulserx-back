@@ -33,7 +33,7 @@ describe('PublicProfileController — delegação', () => {
 describe('PublicProfileController — inscrição', () => {
   it('signup repassa slug + dto (o coach vem do slug, nunca do corpo)', () => {
     const { controller, signupService } = build();
-    const dto = { name: 'Ana', email: 'ana@example.com', password: 'senha-forte', planId: 'p1', acceptTerms: true };
+    const dto = { name: 'Ana', email: 'ana@example.com', planId: 'p1', acceptTerms: true };
     controller.signup('luan', dto as never);
     expect(signupService.signup).toHaveBeenCalledWith('luan', dto);
   });

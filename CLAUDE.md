@@ -172,6 +172,14 @@
 > (consumo da cota do Asaas), corrigido no mesmo PR. O `gatewaySubscriptionId` nunca vai na resposta. **Ambiente de teste
 > (`aevonfit.aevon.online`) continua com o Asaas real — decisão do dono.**
 
+> **Senha criada no link de confirmação (decisão do dono, 2026-09-30 — corrige o Baixo de pré-sequestro do PR B):** a inscrição pela
+> landing **não tem mais senha** (`PublicSignupDto` sem `password`; mandar o campo = 400; a conta nasce com senha interna aleatória).
+> `POST /auth/verify-email` exige `{token, password}`: grava a senha, `passwordChangedAt` e `emailVerifiedAt` e invalida todos os links
+> abertos do usuário; `resetPassword` também invalida `VERIFY_EMAIL`. Quem se inscreve com o e-mail de outra pessoa nunca tem uma senha que
+> funcione. Quem perdeu o e-mail de confirmação usa "Esqueci minha senha" (o link de nova senha também confirma) — o 403
+> `EMAIL_NOT_VERIFIED` do login fica só como defesa (conta sem senha conhecida sempre dá 401). Validação: 942 testes 100%, mutação 5/5,
+> ataque ao vivo 12/12 (intruso se inscreve → não entra com nenhuma senha → vítima cria a senha pelo link e entra), security-analyst sem achados.
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.

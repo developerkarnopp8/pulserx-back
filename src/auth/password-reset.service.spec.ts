@@ -155,7 +155,7 @@ describe('PasswordResetService.resetPassword — criar a senha nova pelo link', 
     expect(data.passwordChangedAt).toBeInstanceOf(Date);
     expect(data).not.toHaveProperty('emailVerifiedAt'); // já confirmado: a data original fica
     expect(prisma.authToken.updateMany).toHaveBeenNthCalledWith(2, {
-      where: { userId: 'u1', usedAt: null, purpose: { in: ['RESET_PASSWORD', 'SET_PASSWORD'] } },
+      where: { userId: 'u1', usedAt: null, purpose: { in: ['RESET_PASSWORD', 'SET_PASSWORD', 'VERIFY_EMAIL'] } },
       data: { usedAt: expect.any(Date) },
     });
   });
