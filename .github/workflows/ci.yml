@@ -28,6 +28,41 @@ jobs:
       - run: npm test -- --coverage
       - run: npm run build
 
+  migrations-em-dia:
+    name: Migrations em dia com o schema
+    runs-on: ubuntu-latest
+    # Barra mudança no schema.prisma sem migration: de 26/09 a 30/09 o schema mudou só por `db push`
+    # e produção ficou 2 migrations atrás. Banco descartável, só para o Prisma montar a sombra.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: sombra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+      - run: npm ci
+      - name: Schema e migrations batem
+        run: |
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "postgresql://ci:ci@localhost:5432/sombra" \
+            --exit-code \
+          || { echo "::error::O schema.prisma mudou sem migration. Gere com: npx prisma migrate dev --name <descricao>"; exit 1; }
+
   seguranca-dependencias:
     name: Segurança — dependências (SCA)
     runs-on: ubuntu-latest
