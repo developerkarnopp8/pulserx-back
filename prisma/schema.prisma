@@ -47,6 +47,10 @@ enum PaymentStatus {
   pending
   paid
   overdue
+  /// Só cobranças do Asaas: estorno pedido/em andamento/feito — o dinheiro volta ao aluno, não conta como recebido.
+  refunded
+  /// Só cobranças do Asaas: contestação no cartão (chargeback) — em disputa, não conta como recebido.
+  chargeback
 }
 
 enum SessionType {

@@ -4,7 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AsaasService } from '../common/asaas.service';
 import { safeEqual } from '../common/safe-equal';
 
-type LocalPaymentStatus = 'pending' | 'paid' | 'overdue';
+type LocalPaymentStatus = 'pending' | 'paid' | 'overdue' | 'refunded' | 'chargeback';
+
+/** Estorno pedido, em andamento ou feito: o dinheiro volta (ou vai voltar) ao aluno. */
+const ESTORNO = ['REFUNDED', 'REFUND_REQUESTED', 'REFUND_IN_PROGRESS'];
+/** Contestação no cartão (chargeback), em disputa ou aguardando reversão. */
+const CONTESTACAO = ['CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE', 'AWAITING_CHARGEBACK_REVERSAL'];
 
 /**
  * Notificações do Asaas (pagamento confirmado/vencido). O corpo do webhook nunca é confiável
@@ -29,6 +34,8 @@ export class WebhooksService {
   private mapStatus(asaasStatus: string): LocalPaymentStatus {
     if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(asaasStatus)) return 'paid';
     if (asaasStatus === 'OVERDUE') return 'overdue';
+    if (ESTORNO.includes(asaasStatus)) return 'refunded';
+    if (CONTESTACAO.includes(asaasStatus)) return 'chargeback';
     return 'pending';
   }
 
@@ -38,7 +45,7 @@ export class WebhooksService {
 
     const existing = await this.prisma.gatewayPayment.findUnique({
       where: { asaasPaymentId: paymentId },
-      select: { subscriptionId: true },
+      select: { subscriptionId: true, paidAt: true },
     });
 
     let subscriptionId = existing?.subscriptionId;
@@ -67,7 +74,9 @@ export class WebhooksService {
           status,
           invoiceUrl: payment.invoiceUrl,
           netValue: payment.netValue ?? null,
-          ...(status === 'paid' ? { paidAt: new Date() } : {}),
+          // A data do pagamento é a da 1ª confirmação: no cartão o Asaas avisa ao aprovar e de novo quando o dinheiro cai
+          // (~30 dias depois) — regravar aqui mudaria a cobrança de mês no Financeiro.
+          ...(status === 'paid' && !existing?.paidAt ? { paidAt: new Date() } : {}),
         },
       });
 

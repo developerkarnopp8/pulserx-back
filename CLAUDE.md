@@ -180,6 +180,16 @@
 > `EMAIL_NOT_VERIFIED` do login fica só como defesa (conta sem senha conhecida sempre dá 401). Validação: 942 testes 100%, mutação 5/5,
 > ataque ao vivo 12/12 (intruso se inscreve → não entra com nenhuma senha → vítima cria a senha pelo link e entra), security-analyst sem achados.
 
+> **Estorno e contestação (pedido do dono, 2026-09-30, branch `feat-estorno-contestacao`):** `PaymentStatus` ganhou `refunded` e
+> `chargeback` (migration `20260930221613_estorno_contestacao`; só cobranças do Asaas — o DTO das cobranças manuais continua aceitando só
+> pending/paid/overdue). Webhook: `REFUNDED`/`REFUND_REQUESTED`/`REFUND_IN_PROGRESS` → refunded; `CHARGEBACK_REQUESTED`/`CHARGEBACK_DISPUTE`/
+> `AWAITING_CHARGEBACK_REVERSAL` → chargeback. Nenhum dos dois conta como pago (totais do coach e do admin filtram `paid`); a assinatura não
+> muda sozinha. **Correção junto:** `paidAt` é gravado só na 1ª confirmação (no cartão o Asaas avisa ao aprovar e de novo quando o dinheiro cai;
+> antes a cobrança "mudava de mês"). **Limitação conhecida (Baixo do security-analyst):** estorno PARCIAL — a documentação do Asaas não diz o
+> status resultante; se continuar "recebido", o total segue com o valor cheio (só quem acessa a conta Asaas da plataforma estorna). O webhook do
+> Asaas precisa ter os eventos de estorno/chargeback marcados no painel. Validação: 949 testes 100%, mutação 5/5, ao vivo 6/6 (estorno real no
+> sandbox → webhook local → refunded, data preservada, fora dos totais).
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.
