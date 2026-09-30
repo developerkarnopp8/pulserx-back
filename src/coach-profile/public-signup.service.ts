@@ -3,6 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailVerificationService } from '../auth/email-verification.service';
+import { unusablePassword } from '../auth/email-tokens';
 import { TERMS_VERSION } from '../common/terms';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PublicSignupDto } from './dto/public-signup.dto';
@@ -53,7 +54,8 @@ export class PublicSignupService {
     });
     if (existing) throw emailExists();
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
+    // Senha que ninguém conhece: a de verdade é criada no link de confirmação (só quem recebe o e-mail).
+    const passwordHash = await bcrypt.hash(unusablePassword(), 10);
     const user = await this.prisma.$transaction(async tx => {
       const created = await tx.user.create({
         data: {

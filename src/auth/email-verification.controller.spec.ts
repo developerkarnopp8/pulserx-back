@@ -1,11 +1,11 @@
 import { EmailVerificationController } from './email-verification.controller';
 
 describe('EmailVerificationController', () => {
-  it('confirmar: repassa o token e devolve a sessão', async () => {
+  it('confirmar: repassa o token e a senha criada e devolve a sessão', async () => {
     const service = { verify: jest.fn().mockResolvedValue({ access_token: 'x' }), resend: jest.fn() };
     const controller = new EmailVerificationController(service as never);
-    await expect(controller.verify({ token: 't'.repeat(43) })).resolves.toEqual({ access_token: 'x' });
-    expect(service.verify).toHaveBeenCalledWith('t'.repeat(43));
+    await expect(controller.verify({ token: 't'.repeat(43), password: 'senha-forte' })).resolves.toEqual({ access_token: 'x' });
+    expect(service.verify).toHaveBeenCalledWith('t'.repeat(43), 'senha-forte');
   });
 
   it('reenviar: sempre a mesma resposta', async () => {

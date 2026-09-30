@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AuthTokenPurpose } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { appUrl } from '../common/app-url';
 import { EmailService } from '../common/email.service';
 import { escapeHtml } from '../common/escape-html';
@@ -16,9 +17,10 @@ export interface ContinuarAssinatura {
 }
 
 /**
- * Confirmação de e-mail da inscrição pela landing (decisão do dono, 2026-09-30): a conta nova só entra depois de confirmar.
- * Contas anteriores foram marcadas como confirmadas na migration. O link vale 48 horas, uso único; confirmar abre a sessão
- * (o link prova que a pessoa recebe e-mail nesse endereço — mesma prova do "Esqueci minha senha").
+ * Confirmação de e-mail da inscrição pela landing (decisões do dono, 2026-09-30): a conta nova só entra depois de confirmar,
+ * e é no link de confirmação que a pessoa CRIA A SENHA (a inscrição não tem senha) — quem se inscreve com o e-mail de outra
+ * pessoa nunca chega a ter uma senha que funcione. Contas anteriores foram marcadas como confirmadas na migration. O link vale
+ * 48 horas, uso único; confirmar abre a sessão (o link prova que a pessoa recebe e-mail nesse endereço).
  */
 @Injectable()
 export class EmailVerificationService {
@@ -37,9 +39,9 @@ export class EmailVerificationService {
     const link = `${appUrl()}/confirmar-email#token=${token}${extra}`;
     await this.email.send(
       user.email,
-      'Confirme seu e-mail — PulseRx',
-      `<p>Olá, ${escapeHtml(user.name)}.</p><p>Falta só confirmar o seu e-mail para entrar no PulseRx.</p>` +
-        `<p><a href="${link}">Confirmar meu e-mail</a></p>` +
+      'Confirme seu e-mail e crie sua senha — PulseRx',
+      `<p>Olá, ${escapeHtml(user.name)}.</p><p>Falta só confirmar o seu e-mail e criar a sua senha para entrar no PulseRx.</p>` +
+        `<p><a href="${link}">Confirmar e criar minha senha</a></p>` +
         '<p>O link vale 48 horas e só pode ser usado uma vez. Se você não se inscreveu, ignore este e-mail.</p>',
     );
     if (process.env.NODE_ENV !== 'production') this.logger.log(`[dev] link de confirmação de ${user.email}: ${link}`);
@@ -60,8 +62,8 @@ export class EmailVerificationService {
     );
   }
 
-  /** Confirma pelo link (uso único, dentro da validade) e abre a sessão. */
-  async verify(token: string) {
+  /** Confirma pelo link (uso único, dentro da validade), grava a senha criada agora e abre a sessão. */
+  async verify(token: string, password: string) {
     const now = new Date();
     const found = await this.prisma.authToken.findUnique({
       where: { tokenHash: hashEmailToken(token) },
@@ -71,11 +73,18 @@ export class EmailVerificationService {
       found && found.purpose === AuthTokenPurpose.VERIFY_EMAIL && !found.usedAt && found.expiresAt > now && !found.user.deletedAt;
     if (!valido) throw new BadRequestException(LINK_INVALIDO);
 
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await this.prisma.$transaction(async tx => {
       // Trava otimista: dois cliques no mesmo link ao mesmo tempo → só um abre sessão.
       const { count } = await tx.authToken.updateMany({ where: { id: found.id, usedAt: null }, data: { usedAt: now } });
       if (count === 0) throw new BadRequestException(LINK_INVALIDO);
-      await tx.user.updateMany({ where: { id: found.userId, emailVerifiedAt: null }, data: { emailVerifiedAt: now } });
+      await tx.user.update({
+        where: { id: found.userId },
+        data: { passwordHash, passwordChangedAt: now, emailVerifiedAt: now },
+        select: { id: true },
+      });
+      // Qualquer outro link aberto (confirmação reenviada, nova senha) deixa de valer.
+      await tx.authToken.updateMany({ where: { userId: found.userId, usedAt: null }, data: { usedAt: now } });
       return tx.user.findUniqueOrThrow({
         where: { id: found.userId },
         select: { id: true, name: true, email: true, role: true, termsVersion: true, healthConsent: true },

@@ -20,10 +20,14 @@ describe('DTOs de senha por e-mail', () => {
     expect(await erros(ResetPasswordDto, { token: 'x'.repeat(201), password: 'senha-forte' })).toBe(1);
   });
 
-  it('VerifyEmailDto: token de 20 a 200', async () => {
-    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43) })).toBe(0);
-    expect(await erros(VerifyEmailDto, { token: 'curto' })).toBe(1);
-    expect(await erros(VerifyEmailDto, { token: 'x'.repeat(201) })).toBe(1);
-    expect(await erros(VerifyEmailDto, {})).toBe(1);
+  it('VerifyEmailDto: token de 20 a 200 e a senha criada agora (8 a 100)', async () => {
+    const senha = 'senha-forte';
+    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43), password: senha })).toBe(0);
+    expect(await erros(VerifyEmailDto, { token: 'curto', password: senha })).toBe(1);
+    expect(await erros(VerifyEmailDto, { token: 'x'.repeat(201), password: senha })).toBe(1);
+    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43) })).toBe(1);
+    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43), password: 'curta' })).toBe(1);
+    expect(await erros(VerifyEmailDto, { token: 't'.repeat(43), password: 'x'.repeat(101) })).toBe(1);
+    expect(await erros(VerifyEmailDto, {})).toBe(2);
   });
 });

@@ -2,7 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { Equals, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
-/** Inscrição do visitante na landing do coach: vira conta de aluno já vinculada a esse coach. */
+/**
+ * Inscrição do visitante na landing do coach: vira conta de aluno já vinculada a esse coach. SEM senha (decisão do dono,
+ * 2026-09-30): a senha é criada no link de confirmação — quem não recebe o e-mail nunca chega a ter senha na conta.
+ */
 export class PublicSignupDto {
   @ApiProperty()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value))
@@ -16,12 +19,6 @@ export class PublicSignupDto {
   @IsEmail()
   @MaxLength(200)
   email!: string;
-
-  @ApiProperty({ minLength: 8 })
-  @IsString()
-  @MinLength(8)
-  @MaxLength(100)
-  password!: string;
 
   @ApiProperty({ description: 'Plano escolhido na página (tem de ser do mesmo coach e estar ativo)' })
   @IsUUID()

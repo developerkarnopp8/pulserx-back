@@ -13,9 +13,9 @@ export class EmailVerificationController {
   @Post('verify-email')
   @HttpCode(200)
   @Throttle({ default: { limit: 10, ttl: 900_000 } })
-  @ApiOperation({ summary: 'Confirma o e-mail pelo link recebido (uso único, 48 horas) e abre a sessão' })
+  @ApiOperation({ summary: 'Confirma o e-mail pelo link recebido (uso único, 48 horas), cria a senha e abre a sessão' })
   verify(@Body() dto: VerifyEmailDto) {
-    return this.verification.verify(dto.token);
+    return this.verification.verify(dto.token, dto.password);
   }
 
   @Post('resend-verification')
