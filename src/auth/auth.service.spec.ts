@@ -1,3 +1,4 @@
+import { TERMS_VERSION } from '../common/terms';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
@@ -52,10 +53,26 @@ describe('AuthService.login', () => {
 
     const result = await service.login({ id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach', passwordHash: 'x' });
 
-    expect(jwt.sign).toHaveBeenCalledWith({ sub: 'u1', email: 'ana@example.com', role: 'coach', name: 'Ana' });
+    expect(jwt.sign).toHaveBeenCalledWith({ sub: 'u1', email: 'ana@example.com', role: 'coach', name: 'Ana', tv: null });
     expect(result).toEqual({
       access_token: 'signed.jwt.token',
       user: { id: 'u1', name: 'Ana', email: 'ana@example.com', role: 'coach' },
     });
+  });
+
+  it('atleta: a versão dos termos vai no token e a resposta diz se falta aceitar/responder a saúde', async () => {
+    const jwt = { sign: jest.fn().mockReturnValue('t') };
+    const service = new AuthService({} as UsersService, jwt as unknown as JwtService);
+    const atleta = { id: 'a1', name: 'Bia', email: 'bia@example.com', role: 'athlete' };
+
+    const antigo = await service.login({ ...atleta, termsVersion: '2026-09-28', healthConsent: null });
+    expect(jwt.sign).toHaveBeenLastCalledWith(expect.objectContaining({ tv: '2026-09-28' }));
+    expect(antigo.user).toEqual({ ...atleta, termsPending: true, healthConsent: null });
+
+    const atual = await service.login({ ...atleta, termsVersion: TERMS_VERSION, healthConsent: false });
+    expect(atual.user).toEqual({ ...atleta, termsPending: false, healthConsent: false });
+
+    const semNada = await service.login(atleta);
+    expect(semNada.user).toEqual({ ...atleta, termsPending: true, healthConsent: null });
   });
 });

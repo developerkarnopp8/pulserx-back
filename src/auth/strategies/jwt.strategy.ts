@@ -29,6 +29,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: payload.email,
       role: payload.role,
       name: payload.name,
+      // Versão dos termos aceita (o JwtAuthGuard barra atleta com versão antiga).
+      tv: payload.tv ?? null,
     };
   }
 }

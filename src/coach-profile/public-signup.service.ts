@@ -3,11 +3,9 @@ import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { TERMS_VERSION } from '../common/terms';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PublicSignupDto } from './dto/public-signup.dto';
-
-/** Versão dos textos legais aceitos na inscrição — trocar quando os Termos/Privacidade mudarem. */
-export const TERMS_VERSION = '2026-09-28';
 
 function emailExists() {
   return new ConflictException({
@@ -62,8 +60,12 @@ export class PublicSignupService {
           role: 'athlete',
           termsAcceptedAt: new Date(),
           termsVersion: TERMS_VERSION,
+          // Opcional e separado dos termos (LGPD Art. 11): sem marcar a caixa, é "não".
+          healthConsent: dto.healthConsent === true,
+          healthConsentAt: new Date(),
         },
-        select: { id: true, name: true, email: true, role: true },
+        // termsVersion/healthConsent: o login diz ao front que não há nada pendente (senão a tela de consentimento abriria).
+        select: { id: true, name: true, email: true, role: true, termsVersion: true, healthConsent: true },
       });
       await tx.student.create({ data: { userId: created.id, coachId: profile.coachId } });
       return created;

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
+import { TERMS_VERSION } from '../common/terms';
 
 @Injectable()
 export class AuthService {
@@ -31,6 +32,8 @@ export class AuthService {
       email: user.email,
       role: user.role,
       name: user.name,
+      // Versão dos termos que o usuário aceitou: o JwtAuthGuard barra atleta com versão antiga.
+      tv: user.termsVersion ?? null,
     };
 
     return {
@@ -40,6 +43,13 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
+        // Só o aluno: a tela de consentimento abre se os termos estão pendentes ou a saúde não foi respondida.
+        ...(user.role === 'athlete'
+          ? {
+              termsPending: user.termsVersion !== TERMS_VERSION,
+              healthConsent: user.healthConsent ?? null,
+            }
+          : {}),
       },
     };
   }

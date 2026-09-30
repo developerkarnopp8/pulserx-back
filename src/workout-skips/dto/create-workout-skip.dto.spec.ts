@@ -29,3 +29,29 @@ describe('CreateWorkoutSkipDto — note com MaxLength', () => {
     expect(errors.find(e => e.property === 'note')).toBeUndefined();
   });
 });
+
+describe('CreateWorkoutSkipDto — motivo', () => {
+  const base = {
+    exerciseId: '11111111-1111-4111-8111-111111111111',
+    decision: 'Postponed',
+  };
+  it.each(['NoTime', 'Injury', 'Later', 'Other'])(
+    'aceita %s',
+    async (reason) => {
+      expect(
+        await validate(
+          plainToInstance(CreateWorkoutSkipDto, { ...base, reason }),
+        ),
+      ).toHaveLength(0);
+    },
+  );
+  it.each(['Withheld', 'Qualquer'])(
+    'recusa %s (Withheld só o sistema grava)',
+    async (reason) => {
+      const errors = await validate(
+        plainToInstance(CreateWorkoutSkipDto, { ...base, reason }),
+      );
+      expect(errors.map((e) => e.property)).toContain('reason');
+    },
+  );
+});

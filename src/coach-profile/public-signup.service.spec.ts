@@ -1,7 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
-import { PublicSignupService, TERMS_VERSION } from './public-signup.service';
+import { TERMS_VERSION } from '../common/terms';
+import { PublicSignupService } from './public-signup.service';
 
 const dto = { name: 'Ana Souza', email: 'ana@example.com', password: 'senha-forte', planId: 'plan-1', acceptTerms: true as const };
 
@@ -11,7 +12,10 @@ function build() {
     subscriptionPlan: { findFirst: jest.fn().mockResolvedValue({ id: 'plan-1', name: 'Core' }) },
     user: {
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockImplementation(async ({ data }) => ({ id: 'u-new', name: data.name, email: data.email, role: data.role })),
+      create: jest.fn().mockImplementation(async ({ data }) => ({
+        id: 'u-new', name: data.name, email: data.email, role: data.role,
+        termsVersion: data.termsVersion, healthConsent: data.healthConsent,
+      })),
     },
     student: { create: jest.fn().mockResolvedValue({ id: 's-new' }) },
     $transaction: jest.fn(),
@@ -33,13 +37,22 @@ describe('PublicSignupService.signup', () => {
       where: { id: 'plan-1', coachId: 'coach-1', active: true }, select: { id: true, name: true },
     });
     const data = prisma.user.create.mock.calls[0][0].data;
-    expect(data).toMatchObject({ name: 'Ana Souza', email: 'ana@example.com', role: 'athlete', termsVersion: TERMS_VERSION });
+    expect(data).toMatchObject({ name: 'Ana Souza', email: 'ana@example.com', role: 'athlete', termsVersion: TERMS_VERSION, healthConsent: false });
     expect(data.termsAcceptedAt).toBeInstanceOf(Date);
+    expect(data.healthConsentAt).toBeInstanceOf(Date);
     expect(await bcrypt.compare('senha-forte', data.passwordHash)).toBe(true);
     expect(prisma.student.create).toHaveBeenCalledWith({ data: { userId: 'u-new', coachId: 'coach-1' } });
     expect(notifications.create).toHaveBeenCalledWith('coach-1', 'new_student', 'Novo aluno pela sua página', 'Ana Souza se inscreveu no plano Core.', '/coach/students');
-    expect(auth.login).toHaveBeenCalledWith({ id: 'u-new', name: 'Ana Souza', email: 'ana@example.com', role: 'athlete' });
+    expect(auth.login).toHaveBeenCalledWith({
+      id: 'u-new', name: 'Ana Souza', email: 'ana@example.com', role: 'athlete', termsVersion: TERMS_VERSION, healthConsent: false,
+    });
     expect(result).toMatchObject({ access_token: 'tok', planId: 'plan-1' });
+  });
+
+  it('marcou a caixa de saúde: consentimento gravado com a data', async () => {
+    const { service, prisma } = build();
+    await service.signup('luan', { ...dto, healthConsent: true });
+    expect(prisma.user.create.mock.calls[0][0].data).toMatchObject({ healthConsent: true });
   });
 
   it('página inexistente ou não publicada: 404, nada é criado', async () => {

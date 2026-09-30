@@ -4,15 +4,9 @@ import { PlanAccessService } from '../subscriptions/plan-access.service';
 import { MessagesService } from '../messages/messages.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateWorkoutSkipDto } from './dto/create-workout-skip.dto';
+import { buildSkipMessage } from './skip-message';
 
 type AuthUser = { id: string; role: string };
-
-const REASON_LABEL: Record<string, string> = {
-  NoTime: 'sem tempo',
-  Injury: 'lesão/dor',
-  Later: 'vai fazer depois',
-  Other: 'outro motivo',
-};
 
 @Injectable()
 export class WorkoutSkipsService {
@@ -35,20 +29,33 @@ export class WorkoutSkipsService {
     const access = await this.planAccess.resolveByPlanId(target.planId, user);
     if (access.isCoach) throw new ForbiddenException('Somente o aluno pula treino.');
 
+    // Observação vazia ou só com espaços = sem observação (não é dado de saúde e não se grava texto vazio).
+    const note = dto.note?.trim() || undefined;
+
+    // "Lesão / dor" e a observação livre são dado de saúde (LGPD Art. 11): só com o consentimento do aluno.
+    if (dto.reason === 'Injury' || note) {
+      const conta = await this.prisma.user.findUnique({ where: { id: user.id }, select: { healthConsent: true } });
+      if (conta?.healthConsent !== true) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          code: 'HEALTH_CONSENT_REQUIRED',
+          message: 'Para registrar lesão ou observação, ative o compartilhamento de dados de saúde no seu perfil.',
+        });
+      }
+    }
+
     const skip = await this.prisma.workoutSkip.create({
       data: {
         exerciseId: dto.exerciseId,
         sessionId: dto.sessionId,
         athleteId: user.id,
         reason: dto.reason,
-        note: dto.note,
+        note,
         decision: dto.decision,
       },
     });
 
-    const reasonLabel = REASON_LABEL[dto.reason] ?? dto.reason;
-    const decisionLabel = dto.decision === 'Postponed' ? 'vai fazer depois' : 'não vai fazer';
-    const content = `Pulei "${target.name}" — motivo: ${reasonLabel}. ${decisionLabel}.${dto.note ? ` Nota: ${dto.note}` : ''}`;
+    const content = buildSkipMessage({ name: target.name, reason: dto.reason, decision: dto.decision, note });
     await this.messagesService.send(user.id, access.coachId, content, true);
     await this.notificationsService.create(
       access.coachId,
