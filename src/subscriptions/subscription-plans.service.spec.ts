@@ -51,12 +51,13 @@ describe('DEFAULT_PLAN_TEMPLATES', () => {
     expect(DEFAULT_PLAN_TEMPLATES.filter(t => !t.isFree).every(t => t.active === false)).toBe(true);
   });
 
-  it('Combo inclui as 3 categorias; Core e LPO só a própria; Free não inclui nenhuma por padrão', () => {
+  it('Combo inclui as 3 categorias; Core e LPO só a própria; Free mostra o Core como amostra (decisão do dono)', () => {
     const byName = Object.fromEntries(DEFAULT_PLAN_TEMPLATES.map(t => [t.name.split(' ')[0], t]));
     expect(byName['Combo'].categories).toEqual(['CORE', 'LPO', 'PERFORMANCE']);
     expect(byName['Core'].categories).toEqual(['CORE']);
     expect(byName['LPO'].categories).toEqual(['LPO']);
-    expect(byName['Free'].categories).toEqual([]);
+    expect(byName['Free'].categories).toEqual(['CORE']);
+    expect(byName['Free'].description).toBe('Amostra do Core, para conhecer a plataforma.');
     expect(byName['Free'].isFree).toBe(true);
   });
 });

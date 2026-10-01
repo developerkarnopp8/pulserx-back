@@ -9,7 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 describe('WorkoutSkipsService.create', () => {
   let service: WorkoutSkipsService;
   let prisma: any;
-  let planAccess: { resolveByPlanId: jest.Mock };
+  let planAccess: { resolveByExerciseId: jest.Mock; resolveBySessionId: jest.Mock; resolve: jest.Mock };
   let messagesService: { send: jest.Mock };
   let notificationsService: { create: jest.Mock };
 
@@ -23,7 +23,9 @@ describe('WorkoutSkipsService.create', () => {
       workoutSkip: { create: jest.fn() },
       user: { findUnique: jest.fn().mockResolvedValue({ healthConsent: true }) },
     };
-    planAccess = { resolveByPlanId: jest.fn().mockResolvedValue(access) };
+    const resolve = jest.fn().mockResolvedValue(access);
+    // Os dois caminhos (exercício/sessão) chamam o mesmo mock; o teste confere qual foi usado pelo argumento.
+    planAccess = { resolveByExerciseId: resolve, resolveBySessionId: resolve, resolve };
     messagesService = { send: jest.fn().mockResolvedValue({}) };
     notificationsService = { create: jest.fn() };
 
@@ -64,7 +66,7 @@ describe('WorkoutSkipsService.create', () => {
       athlete,
     );
 
-    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', athlete);
+    expect(planAccess.resolveByExerciseId).toHaveBeenCalledWith('ex-1', athlete);
     expect(prisma.workoutSkip.create).toHaveBeenCalledWith({
       data: { exerciseId: 'ex-1', sessionId: undefined, athleteId: 'athlete-1', reason: 'NoTime', note: undefined, decision: 'Postponed' },
     });
@@ -170,7 +172,7 @@ describe('WorkoutSkipsService.create', () => {
       id: 'ex-1', name: 'HSPU',
       session: { day: { week: { planId: 'plan-outro' } } },
     });
-    planAccess.resolveByPlanId.mockRejectedValue(new ForbiddenException());
+    planAccess.resolve.mockRejectedValue(new ForbiddenException());
 
     await expect(
       service.create({ exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed' } as any, athlete),
@@ -212,11 +214,11 @@ describe('WorkoutSkipsService.create', () => {
       session: { day: { week: { planId: 'plan-shared' } } },
     });
     prisma.workoutSkip.create.mockResolvedValue({ id: 'skip-3' });
-    planAccess.resolveByPlanId.mockResolvedValue({ ...access, coachId: 'coach-9', studentId: 'student-7' });
+    planAccess.resolve.mockResolvedValue({ ...access, coachId: 'coach-9', studentId: 'student-7' });
 
     await service.create({ exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed' } as any, athlete);
 
-    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-shared', athlete);
+    expect(planAccess.resolveByExerciseId).toHaveBeenCalledWith('ex-1', athlete);
     expect(messagesService.send).toHaveBeenCalledWith('athlete-1', 'coach-9', expect.any(String), true);
     expect(notificationsService.create).toHaveBeenCalledWith(
       'coach-9', 'workout_skipped', expect.any(String), expect.any(String), '/coach/plan-builder/student-7',
@@ -228,7 +230,7 @@ describe('WorkoutSkipsService.create', () => {
       id: 'ex-1', name: 'HSPU',
       session: { day: { week: { planId: 'plan-1' } } },
     });
-    planAccess.resolveByPlanId.mockResolvedValue({ ...access, isCoach: true });
+    planAccess.resolve.mockResolvedValue({ ...access, isCoach: true });
 
     await expect(
       service.create({ exerciseId: 'ex-1', reason: 'NoTime', decision: 'Postponed' } as any, { id: 'coach-1', role: 'coach' }),
@@ -243,7 +245,7 @@ describe('WorkoutSkipsService.create', () => {
       service.create({ exerciseId: 'ex-inexistente', reason: 'NoTime', decision: 'Postponed' } as any, athlete),
     ).rejects.toThrow(NotFoundException);
 
-    expect(planAccess.resolveByPlanId).not.toHaveBeenCalled();
+    expect(planAccess.resolve).not.toHaveBeenCalled();
     expect(prisma.workoutSkip.create).not.toHaveBeenCalled();
     expect(messagesService.send).not.toHaveBeenCalled();
   });
@@ -264,7 +266,7 @@ describe('WorkoutSkipsService.create', () => {
       where: { id: 'sess-1' },
       include: { day: { include: { week: { include: { plan: true } } } } },
     });
-    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', athlete);
+    expect(planAccess.resolveBySessionId).toHaveBeenCalledWith('sess-1', athlete);
     expect(prisma.workoutSkip.create).toHaveBeenCalledWith({
       data: { exerciseId: undefined, sessionId: 'sess-1', athleteId: 'athlete-1', reason: 'Injury', note: undefined, decision: 'Abandoned' },
     });
@@ -281,7 +283,7 @@ describe('WorkoutSkipsService.create', () => {
       service.create({ sessionId: 'sess-inexistente', reason: 'NoTime', decision: 'Postponed' } as any, athlete),
     ).rejects.toThrow(NotFoundException);
 
-    expect(planAccess.resolveByPlanId).not.toHaveBeenCalled();
+    expect(planAccess.resolve).not.toHaveBeenCalled();
     expect(prisma.workoutSkip.create).not.toHaveBeenCalled();
     expect(messagesService.send).not.toHaveBeenCalled();
   });
@@ -305,7 +307,7 @@ describe('WorkoutSkipsService.getPendingCountByStudent', () => {
       providers: [
         WorkoutSkipsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveByExerciseId: jest.fn(), resolveBySessionId: jest.fn() } },
         { provide: MessagesService, useValue: { send: jest.fn() } },
         { provide: NotificationsService, useValue: { create: jest.fn() } },
       ],

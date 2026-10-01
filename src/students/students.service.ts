@@ -6,6 +6,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateStudentDto, UpdateStudentDto } from './dto/create-student.dto';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
+import { SubscriptionAccessService } from '../subscriptions/subscription-access.service';
+import { lockWeeksAfter } from '../subscriptions/plan-access.service';
 import { PasswordResetService } from '../auth/password-reset.service';
 import { unusablePassword } from '../auth/email-tokens';
 
@@ -48,6 +50,7 @@ export class StudentsService {
     private prisma: PrismaService,
     private subscriptions: SubscriptionsService,
     private passwordReset: PasswordResetService,
+    private subscriptionAccess: SubscriptionAccessService,
   ) {}
 
   /** Coach dono do aluno, ou o próprio aluno — ninguém mais. */
@@ -217,6 +220,10 @@ export class StudentsService {
     return { unlinked: count > 0 };
   }
 
+  /**
+   * Plano individual atual com a estrutura completa. Coach dono vê tudo; o próprio aluno passa pela mesma regra de assinatura
+   * do resto do app (categoria liberada e, no Free, só a semana da amostra) — antes esta rota entregava o plano sem conferir.
+   */
   async getCurrentPlan(studentId: string, user: AuthUser) {
     const student = await this.findOne(studentId, user);
     const plan = await this.prisma.trainingPlan.findFirst({
@@ -241,6 +248,9 @@ export class StudentsService {
         },
       },
     });
-    return { student, plan };
+    if (!plan || user.role !== 'athlete') return { student, plan };
+    await this.subscriptionAccess.assertCanAccessCategory(studentId, plan.category);
+    const maxWeek = await this.subscriptionAccess.weekLimit(studentId);
+    return { student, plan: { ...plan, weeks: lockWeeksAfter(plan.weeks, maxWeek) } };
   }
 }

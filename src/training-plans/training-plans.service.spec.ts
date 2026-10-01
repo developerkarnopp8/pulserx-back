@@ -41,7 +41,7 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
   });
 
   let planAccess: { resolveByPlanId: jest.Mock };
-  let subscriptionAccess: { getViewableCategories: jest.Mock; canAccessCategory: jest.Mock };
+  let subscriptionAccess: { getViewableCategories: jest.Mock; canAccessCategory: jest.Mock; weekLimit: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -50,6 +50,7 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
     };
     planAccess = { resolveByPlanId: jest.fn() };
     subscriptionAccess = {
+      weekLimit: jest.fn().mockResolvedValue(null),
       getViewableCategories: jest.fn().mockResolvedValue(['CORE', 'LPO', 'PERFORMANCE']),
       canAccessCategory: jest.fn(),
     };
@@ -147,6 +148,21 @@ describe('TrainingPlansService — filtro por athleteId em fullPlanInclude', () 
     expect(prisma.trainingPlan.findUnique).toHaveBeenLastCalledWith(
       expect.objectContaining({ include: expectedInclude('coach-1') }),
     );
+  });
+
+  it('Free (amostra): findById e findByStudent devolvem só a semana 1 com conteúdo', async () => {
+    const weeks = [1, 2].map(n => ({ weekNumber: n, days: [{ id: `d${n}` }] }));
+    planAccess.resolveByPlanId.mockResolvedValue({ athleteId: 'athlete-1', maxWeek: 1 });
+    prisma.trainingPlan.findUnique.mockResolvedValue({ id: 'plan-1', weeks });
+    const um = await service.findById('plan-1', athleteUser);
+    expect(um.weeks).toEqual([weeks[0], { weekNumber: 2, days: [], locked: true }]);
+
+    subscriptionAccess.weekLimit.mockResolvedValue(1);
+    prisma.student.findUnique.mockResolvedValue({ id: 'student-1', userId: 'athlete-1', coachId: 'coach-1' });
+    prisma.trainingPlan.findMany.mockResolvedValue([{ id: 'plan-1', weeks }]);
+    const lista = await service.findByStudent('student-1', athleteUser);
+    expect(subscriptionAccess.weekLimit).toHaveBeenCalledWith('student-1');
+    expect(lista[0].weeks[1]).toEqual({ weekNumber: 2, days: [], locked: true });
   });
 
   it('findById propaga o Forbidden do acesso sem ler o plano', async () => {

@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PlanScope, TrainingCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { PlanAccessService } from '../subscriptions/plan-access.service';
+import { lockWeeksAfter, PlanAccessService } from '../subscriptions/plan-access.service';
 import { SubscriptionAccessService } from '../subscriptions/subscription-access.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -90,9 +90,9 @@ export class TrainingPlansService {
    * compartilhado). Retorna de quem é o progresso a exibir — no plano compartilhado visto pelo
    * próprio coach não há progresso, então usa o id dele (filtro que volta vazio).
    */
-  private async assertCanViewPlan(planId: string, user: AuthUser): Promise<{ athleteId: string }> {
+  private async assertCanViewPlan(planId: string, user: AuthUser): Promise<{ athleteId: string; maxWeek: number | null }> {
     const access = await this.planAccess.resolveByPlanId(planId, user);
-    return { athleteId: access.athleteId ?? user.id };
+    return { athleteId: access.athleteId ?? user.id, maxWeek: access.maxWeek };
   }
 
   /** Progresso a exibir num plano do coach dono (individual = do aluno; compartilhado = sem progresso). */
@@ -159,8 +159,11 @@ export class TrainingPlansService {
     }
     // Aluno: o plano individual + os compartilhados (publicados) do coach dele, só das categorias
     // que a assinatura libera (todas, enquanto o bloqueio estiver desligado).
-    const categories = await this.subscriptionAccess.getViewableCategories(studentId);
-    return this.prisma.trainingPlan.findMany({
+    const [categories, maxWeek] = await Promise.all([
+      this.subscriptionAccess.getViewableCategories(studentId),
+      this.subscriptionAccess.weekLimit(studentId),
+    ]);
+    const plans = await this.prisma.trainingPlan.findMany({
       where: {
         category: { in: categories },
         OR: [
@@ -171,6 +174,8 @@ export class TrainingPlansService {
       include: fullPlanInclude(student.userId),
       orderBy: { createdAt: 'desc' },
     });
+    // Free (amostra): as semanas além da 1ª vêm sem conteúdo.
+    return plans.map(p => ({ ...p, weeks: lockWeeksAfter(p.weeks, maxWeek) }));
   }
 
   /** Planos compartilhados (Core/LPO) do coach — o plano pertence ao coach, não a um aluno. */
@@ -183,13 +188,13 @@ export class TrainingPlansService {
   }
 
   async findById(id: string, user: AuthUser) {
-    const { athleteId } = await this.assertCanViewPlan(id, user);
+    const { athleteId, maxWeek } = await this.assertCanViewPlan(id, user);
     const plan = await this.prisma.trainingPlan.findUnique({
       where: { id },
       include: fullPlanInclude(athleteId),
     });
     if (!plan) throw new NotFoundException('Plano não encontrado');
-    return plan;
+    return { ...plan, weeks: lockWeeksAfter(plan.weeks, maxWeek) };
   }
 
   async create(coachId: string, dto: CreatePlanDto) {

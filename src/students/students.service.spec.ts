@@ -1,9 +1,11 @@
+import { ForbiddenException } from '@nestjs/common';
 import * as emailTokens from '../auth/email-tokens';
 import * as bcrypt from 'bcrypt';
 import { Test } from '@nestjs/testing';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import { StudentsService } from './students.service';
 import { PasswordResetService } from '../auth/password-reset.service';
+import { SubscriptionAccessService } from '../subscriptions/subscription-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -29,6 +31,7 @@ describe('StudentsService.findAll — completionPercent computado dinamicamente'
         { provide: PrismaService, useValue: prisma },
         { provide: SubscriptionsService, useValue: {} },
         { provide: PasswordResetService, useValue: {} },
+        { provide: SubscriptionAccessService, useValue: {} },
       ],
     }).compile();
     service = module.get(StudentsService);
@@ -138,7 +141,7 @@ describe('StudentsService.findAll — completionPercent computado dinamicamente'
 describe('StudentsService.findByUserId', () => {
   it('encontra o aluno pelo userId, incluindo o user resumido', async () => {
     const prisma: any = { student: { findFirst: jest.fn().mockResolvedValue({ id: 's1', userId: 'u1', user: { id: 'u1' } }) } };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
 
     await expect(service.findByUserId('u1')).resolves.toEqual({ id: 's1', userId: 'u1', user: { id: 'u1' } });
     expect(prisma.student.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1', unlinkedAt: null } }));
@@ -146,13 +149,13 @@ describe('StudentsService.findByUserId', () => {
 
   it('sem perfil de aluno pra esse userId → 404', async () => {
     const prisma: any = { student: { findFirst: jest.fn().mockResolvedValue(null) } };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
     await expect(service.findByUserId('u1')).rejects.toThrow('Perfil de aluno não encontrado');
   });
 
   it('a seleção nunca inclui cpf/asaasCustomerId (dado de pagamento, não é do perfil geral)', async () => {
     const prisma: any = { student: { findFirst: jest.fn().mockResolvedValue({ id: 's1' }) } };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
     await service.findByUserId('u1');
     const select = prisma.student.findFirst.mock.calls[0][0].select;
     expect(select).not.toHaveProperty('cpf');
@@ -165,7 +168,7 @@ describe('StudentsService.findOne — checagem de dono (IDOR)', () => {
 
   function build(found: unknown = student) {
     const prisma: any = { student: { findUnique: jest.fn().mockResolvedValue(found) } };
-    return { service: new StudentsService(prisma, {} as any, {} as any), prisma };
+    return { service: new StudentsService(prisma, {} as any, {} as any, {} as any), prisma };
   }
 
   it('coach dono: acesso liberado', async () => {
@@ -222,7 +225,7 @@ describe('StudentsService.create', () => {
       $transaction: jest.fn((cb: any) => cb(tx)),
     };
     const passwordReset = { sendWelcome: jest.fn().mockResolvedValue(undefined) };
-    return { service: new StudentsService(prisma, {} as any, passwordReset as any), prisma, tx, passwordReset };
+    return { service: new StudentsService(prisma, {} as any, passwordReset as any, {} as any), prisma, tx, passwordReset };
   }
   const dto = { name: 'Gustavo', email: 'gustavo@example.com', goal: 'Força' };
 
@@ -294,7 +297,7 @@ describe('StudentsService.update / remove — dono (coach) via getOwnedByCoach',
       user: { delete: jest.fn() },
     };
     const subscriptions = { endSubscription: jest.fn().mockResolvedValue(true) };
-    return { service: new StudentsService(prisma, subscriptions as any, {} as any), prisma, subscriptions };
+    return { service: new StudentsService(prisma, subscriptions as any, {} as any, {} as any), prisma, subscriptions };
   }
   const owned = { id: 's1', coachId: 'coach-1', userId: 'u1' };
 
@@ -374,7 +377,7 @@ describe('StudentsService.getCurrentPlan', () => {
       student: { findUnique: jest.fn().mockResolvedValue(student) },
       trainingPlan: { findFirst: jest.fn().mockResolvedValue(plan) },
     };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
 
     await expect(service.getCurrentPlan('s1', { id: 'coach-1', role: 'coach' })).resolves.toEqual({ student, plan });
     expect(prisma.trainingPlan.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { studentId: 's1' } }));
@@ -386,15 +389,47 @@ describe('StudentsService.getCurrentPlan', () => {
       student: { findUnique: jest.fn().mockResolvedValue(student) },
       trainingPlan: { findFirst: jest.fn().mockResolvedValue(null) },
     };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
 
     await expect(service.getCurrentPlan('s1', { id: 'coach-1', role: 'coach' })).resolves.toEqual({ student, plan: null });
+  });
+
+  describe('o próprio aluno: mesma regra de assinatura do resto do app', () => {
+    const student = { id: 's1', coachId: 'coach-1', userId: 'athlete-1' };
+    const weeks = [1, 2, 3].map(n => ({ weekNumber: n, days: [{ id: `d${n}` }] }));
+    const build = (access: any) => {
+      const prisma: any = {
+        student: { findUnique: jest.fn().mockResolvedValue(student) },
+        trainingPlan: { findFirst: jest.fn().mockResolvedValue({ id: 'plan-1', category: 'PERFORMANCE', weeks }) },
+      };
+      return new StudentsService(prisma, {} as any, {} as any, access);
+    };
+
+    it('categoria fora da assinatura: 403 (antes esta rota entregava o plano sem conferir)', async () => {
+      const access = {
+        assertCanAccessCategory: jest.fn().mockRejectedValue(new ForbiddenException('Seu plano não inclui esta categoria de treino.')),
+        weekLimit: jest.fn(),
+      };
+      await expect(build(access).getCurrentPlan('s1', { id: 'athlete-1', role: 'athlete' })).rejects.toThrow('Seu plano não inclui');
+      expect(access.assertCanAccessCategory).toHaveBeenCalledWith('s1', 'PERFORMANCE');
+    });
+
+    it('Free (amostra): só a 1ª semana tem conteúdo; sem limite, vem tudo', async () => {
+      const amostra = { assertCanAccessCategory: jest.fn().mockResolvedValue(undefined), weekLimit: jest.fn().mockResolvedValue(1) };
+      const r = await build(amostra).getCurrentPlan('s1', { id: 'athlete-1', role: 'athlete' });
+      expect(r.plan!.weeks.map((w: any) => [w.weekNumber, w.days.length, w.locked ?? false])).toEqual([[1, 1, false], [2, 0, true], [3, 0, true]]);
+      expect(amostra.weekLimit).toHaveBeenCalledWith('s1');
+
+      const pago = { assertCanAccessCategory: jest.fn().mockResolvedValue(undefined), weekLimit: jest.fn().mockResolvedValue(null) };
+      const r2 = await build(pago).getCurrentPlan('s1', { id: 'athlete-1', role: 'athlete' });
+      expect(r2.plan!.weeks).toEqual(weeks);
+    });
   });
 
   it('propaga o 403 de findOne (não vaza plano de aluno que não é seu)', async () => {
     const student = { id: 's1', coachId: 'coach-9', userId: 'athlete-1' };
     const prisma: any = { student: { findUnique: jest.fn().mockResolvedValue(student) }, trainingPlan: { findFirst: jest.fn() } };
-    const service = new StudentsService(prisma, {} as any, {} as any);
+    const service = new StudentsService(prisma, {} as any, {} as any, {} as any);
 
     await expect(service.getCurrentPlan('s1', { id: 'coach-1', role: 'coach' })).rejects.toThrow('Você não tem acesso a este aluno.');
     expect(prisma.trainingPlan.findFirst).not.toHaveBeenCalled();

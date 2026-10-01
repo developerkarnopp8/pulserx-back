@@ -190,6 +190,19 @@
 > Asaas precisa ter os eventos de estorno/chargeback marcados no painel. Validação: 949 testes 100%, mutação 5/5, ao vivo 6/6 (estorno real no
 > sandbox → webhook local → refunded, data preservada, fora dos totais).
 
+> **Regras de acesso pela assinatura (decisões do dono, 2026-10-01, branch `feat-regras-acesso-free-carencia`):** fonte única
+> `accessState` (`subscriptions/subscription-access.service.ts`), usada pelo app e espelhada na contagem do admin (`platform-settings`):
+> (1) **Free = amostra do Core, só a 1ª semana** (`FREE_SAMPLE_WEEKS`; o Free padrão nasce com CORE e a migration de dados
+> `20261001120000_free_amostra_core` corrigiu os Free sem categoria) — o dono escolheu a semana 1 depois que a revisão mostrou que o Core inteiro
+> esvaziaria o plano Core pago; (2) **inadimplente: 5 dias de tolerância** a partir do vencimento da fatura vencida mais antiga
+> (`PAST_DUE_GRACE_DAYS`; PAST_DUE posto à mão, sem fatura no Asaas, não tem tolerância); (3) **cobrança contestada bloqueia** até voltar a
+> paga. O corte da semana é na API: `PlanAccess.maxWeek`; sessão/exercício/finalizar/pular de semana > maxWeek = 403 "Assine um plano para ver as
+> próximas semanas." (checkout e skip passaram a resolver pelo id da sessão/exercício); plano entregue ao aluno vem com as semanas seguintes
+> sem conteúdo e `locked: true` (`lockWeeksAfter`). **Corrigido junto:** `GET /students/:id/plan` entregava o plano individual ao próprio
+> aluno sem conferir a assinatura. `GET /subscriptions/me` ganhou `accessNotice` (prazo da tolerância / contestação; só com o bloqueio ligado).
+> Termos item 4 descrevem a regra. Validação: 970 testes 100%, mutação 12/12 (1 sobrevivente "tirar isFree da consulta" → teste novo), ao vivo
+> 10/10 no local (tolerância, perda após 5 dias, contestação e reversão, Free semana 1 vs 2 em plano/sessão/finalizar/pular, pago liberado).
+
 ## Visão Geral
 
 **PulseRx** é uma plataforma SaaS para gestão de academias. O backend expõe uma API REST consumida pelo frontend Angular e (futuramente) por apps mobile.

@@ -38,7 +38,11 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     $transaction: jest.fn(),
   };
   prisma.$transaction.mockImplementation((cb: any) => cb(prisma));
-  const access = { getViewableCategories: jest.fn().mockResolvedValue(['CORE']) };
+  const access = {
+    getViewableCategories: jest.fn().mockResolvedValue(['CORE']),
+    isEnforced: jest.fn().mockResolvedValue(false),
+    getAccessState: jest.fn().mockResolvedValue({ categories: ['CORE'], graceUntil: null, chargeback: false }),
+  };
   const notifications = { create: jest.fn() };
   const coachContracts = {
     getContractForCharge: jest.fn().mockResolvedValue(
@@ -257,7 +261,7 @@ describe('SubscriptionsService.getMine', () => {
   it('assinatura manual (sem Asaas): devolve a assinatura e as categorias, sem cartão', async () => {
     const { service, prisma, access, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: null } });
     await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({
-      subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: null,
+      subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: null, accessNotice: null,
     });
     expect(prisma.student.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', unlinkedAt: null }, select: { id: true } });
     const calls = prisma.subscription.findUnique.mock.calls;
@@ -270,7 +274,9 @@ describe('SubscriptionsService.getMine', () => {
     const { service, asaas } = build({ current: { id: 'sub1', status: 'ACTIVE', gatewaySubscriptionId: 'sub_asaas_9' } });
     const r = await service.getMine({ id: 'u1', role: 'athlete' });
     expect(asaas.getSubscriptionCard).toHaveBeenCalledWith('sub_asaas_9');
-    expect(r).toEqual({ subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: { brand: 'MASTERCARD', last4: '8829' } });
+    expect(r).toEqual({
+      subscription: { id: 'sub1', status: 'ACTIVE' }, categories: ['CORE'], autoDebitCard: { brand: 'MASTERCARD', last4: '8829' }, accessNotice: null,
+    });
     expect(JSON.stringify(r)).not.toContain('sub_asaas_9');
   });
 
@@ -317,9 +323,30 @@ describe('SubscriptionsService.getMine', () => {
     expect(cache.has('sub_novo')).toBe(true);
   });
 
+  it('bloqueio ligado: avisa a tolerância do inadimplente ou a contestação; sem nada a avisar → null', async () => {
+    const ate = new Date('2026-10-06T00:00:00Z');
+    const { service, access } = build({ current: { id: 'sub1', status: 'PAST_DUE', gatewaySubscriptionId: null } });
+    access.isEnforced.mockResolvedValue(true);
+    access.getAccessState.mockResolvedValueOnce({ categories: ['CORE'], graceUntil: ate, chargeback: false });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ accessNotice: { graceUntil: ate, chargeback: false } });
+    expect(access.getAccessState).toHaveBeenCalledWith('s1');
+
+    access.getAccessState.mockResolvedValueOnce({ categories: [], graceUntil: null, chargeback: true });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ accessNotice: { graceUntil: null, chargeback: true } });
+
+    access.getAccessState.mockResolvedValueOnce({ categories: ['CORE'], graceUntil: null, chargeback: false });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ accessNotice: null });
+  });
+
+  it('bloqueio desligado: ninguém perde acesso, então não há aviso (nem consulta a regra)', async () => {
+    const { service, access } = build({ current: { id: 'sub1', status: 'PAST_DUE', gatewaySubscriptionId: null } });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toMatchObject({ accessNotice: null });
+    expect(access.getAccessState).not.toHaveBeenCalled();
+  });
+
   it('sem assinatura: null em tudo', async () => {
     const { service } = build({ current: null });
-    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({ subscription: null, categories: ['CORE'], autoDebitCard: null });
+    await expect(service.getMine({ id: 'u1', role: 'athlete' })).resolves.toEqual({ subscription: null, categories: ['CORE'], autoDebitCard: null, accessNotice: null });
   });
 
   it('usuário sem perfil de aluno → 404', async () => {

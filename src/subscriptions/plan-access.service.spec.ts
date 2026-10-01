@@ -1,13 +1,13 @@
 import { Test } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { PlanAccessService } from './plan-access.service';
+import { lockWeeksAfter, PlanAccessService } from './plan-access.service';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('PlanAccessService', () => {
   let service: PlanAccessService;
   let prisma: any;
-  let subscriptionAccess: { assertCanAccessCategory: jest.Mock };
+  let subscriptionAccess: { assertCanAccessCategory: jest.Mock; weekLimit: jest.Mock };
 
   const coach = { id: 'coach-1', role: 'coach' };
   const outroCoach = { id: 'coach-9', role: 'coach' };
@@ -28,7 +28,7 @@ describe('PlanAccessService', () => {
       session: { findUnique: jest.fn() },
       exercise: { findUnique: jest.fn() },
     };
-    subscriptionAccess = { assertCanAccessCategory: jest.fn().mockResolvedValue(undefined) };
+    subscriptionAccess = { assertCanAccessCategory: jest.fn().mockResolvedValue(undefined), weekLimit: jest.fn().mockResolvedValue(null) };
     const module = await Test.createTestingModule({
       providers: [
         PlanAccessService,
@@ -168,5 +168,59 @@ describe('PlanAccessService', () => {
   it('resolveByExerciseId: 404 quando o exercício não existe', async () => {
     prisma.exercise.findUnique.mockResolvedValue(null);
     await expect(service.resolveByExerciseId('x', atleta)).rejects.toThrow(NotFoundException);
+  });
+
+  describe('Free (amostra): só a semana 1', () => {
+    it('aluno no Free: maxWeek vem da assinatura; coach nunca tem limite', async () => {
+      subscriptionAccess.weekLimit.mockResolvedValue(1);
+      prisma.trainingPlan.findUnique.mockResolvedValue(shared);
+      prisma.student.findFirst.mockResolvedValue({ id: 'student-1' });
+      await expect(service.resolveByPlanId('plan-s', atleta)).resolves.toMatchObject({ maxWeek: 1 });
+      expect(subscriptionAccess.weekLimit).toHaveBeenCalledWith('student-1');
+      await expect(service.resolveByPlanId('plan-s', coach)).resolves.toMatchObject({ maxWeek: null });
+
+      prisma.trainingPlan.findUnique.mockResolvedValue(individual);
+      await expect(service.resolveByPlanId('plan-i', atleta)).resolves.toMatchObject({ maxWeek: 1 });
+    });
+
+    it('sessão ou exercício da semana 2 em diante: 403 "Assine..."; semana 1 passa', async () => {
+      subscriptionAccess.weekLimit.mockResolvedValue(1);
+      prisma.trainingPlan.findUnique.mockResolvedValue(shared);
+      prisma.student.findFirst.mockResolvedValue({ id: 'student-1' });
+
+      prisma.session.findUnique.mockResolvedValue({ day: { week: { planId: 'plan-s', weekNumber: 2 } } });
+      await expect(service.resolveBySessionId('sess-2', atleta)).rejects.toThrow('Assine um plano para ver as próximas semanas.');
+      prisma.session.findUnique.mockResolvedValue({ day: { week: { planId: 'plan-s', weekNumber: 1 } } });
+      await expect(service.resolveBySessionId('sess-1', atleta)).resolves.toMatchObject({ planId: 'plan-s' });
+      expect(prisma.session.findUnique.mock.calls[0][0].select.day.select.week.select).toEqual({ planId: true, weekNumber: true });
+
+      prisma.exercise.findUnique.mockResolvedValue({ session: { day: { week: { planId: 'plan-s', weekNumber: 3 } } } });
+      await expect(service.resolveByExerciseId('ex-3', atleta)).rejects.toThrow(ForbiddenException);
+      prisma.exercise.findUnique.mockResolvedValue({ session: { day: { week: { planId: 'plan-s', weekNumber: 1 } } } });
+      await expect(service.resolveByExerciseId('ex-1', atleta)).resolves.toMatchObject({ planId: 'plan-s' });
+    });
+
+    it('sem limite (pago ou bloqueio desligado): qualquer semana passa', async () => {
+      prisma.trainingPlan.findUnique.mockResolvedValue(shared);
+      prisma.student.findFirst.mockResolvedValue({ id: 'student-1' });
+      prisma.session.findUnique.mockResolvedValue({ day: { week: { planId: 'plan-s', weekNumber: 4 } } });
+      await expect(service.resolveBySessionId('sess-4', atleta)).resolves.toMatchObject({ maxWeek: null });
+    });
+  });
+});
+
+describe('lockWeeksAfter', () => {
+  const weeks = [1, 2, 3].map(n => ({ weekNumber: n, days: [{ id: `d${n}` }] }));
+
+  it('limite 1: semanas 2 e 3 sem conteúdo e marcadas; a 1 intacta', () => {
+    expect(lockWeeksAfter(weeks, 1)).toEqual([
+      weeks[0],
+      { weekNumber: 2, days: [], locked: true },
+      { weekNumber: 3, days: [], locked: true },
+    ]);
+  });
+
+  it('sem limite: devolve as semanas como estão', () => {
+    expect(lockWeeksAfter(weeks, null)).toBe(weeks);
   });
 });
