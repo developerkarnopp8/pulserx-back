@@ -76,13 +76,23 @@ export class SubscriptionsService {
       }),
       this.access.getViewableCategories(student.id),
     ]);
-    if (!row) return { subscription: null, categories, autoDebitCard: null };
+    if (!row) return { subscription: null, categories, autoDebitCard: null, accessNotice: null };
     // O id da assinatura no Asaas nunca vai para a resposta.
     const { gatewaySubscriptionId, ...subscription } = row;
     const ativa = gatewaySubscriptionId && subscription.status !== SubscriptionStatus.CANCELED;
     // Falhou ou demorou no Asaas: a tela abre sem a linha do cartão (nunca derruba a tela da assinatura).
     const autoDebitCard = ativa ? await this.cardOf(gatewaySubscriptionId) : null;
-    return { subscription, categories, autoDebitCard };
+    return { subscription, categories, autoDebitCard, accessNotice: await this.accessNotice(student.id) };
+  }
+
+  /**
+   * Aviso de acesso para a tela do aluno: inadimplente dentro da tolerância (até quando continua vendo) ou cobrança contestada
+   * (sem acesso até resolver). Só faz sentido com o bloqueio por assinatura ligado; desligado, ninguém perde acesso.
+   */
+  private async accessNotice(studentId: string): Promise<{ graceUntil: Date | null; chargeback: boolean } | null> {
+    if (!(await this.access.isEnforced())) return null;
+    const { graceUntil, chargeback } = await this.access.getAccessState(studentId);
+    return graceUntil || chargeback ? { graceUntil, chargeback } : null;
   }
 
   /**

@@ -27,7 +27,10 @@ export class WorkoutSkipsService {
       ? await this.loadExerciseContext(dto.exerciseId)
       : await this.loadSessionContext(dto.sessionId!);
 
-    const access = await this.planAccess.resolveByPlanId(target.planId, user);
+    // Pelo alvo (exercício ou sessão): confere também a semana da amostra do Free.
+    const access = dto.exerciseId
+      ? await this.planAccess.resolveByExerciseId(dto.exerciseId, user)
+      : await this.planAccess.resolveBySessionId(dto.sessionId!, user);
     if (access.isCoach) throw new ForbiddenException('Somente o aluno pula treino.');
 
     // Observação vazia ou só com espaços = sem observação (não é dado de saúde e não se grava texto vazio).

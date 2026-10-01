@@ -33,11 +33,11 @@ function buildPrisma(overrides: any = {}) {
 describe('WorkoutSessionsService.checkout', () => {
   let service: WorkoutSessionsService;
   let prisma: any;
-  let planAccess: { resolveByPlanId: jest.Mock };
+  let planAccess: { resolveBySessionId: jest.Mock };
 
   beforeEach(async () => {
     prisma = buildPrisma();
-    planAccess = { resolveByPlanId: jest.fn().mockResolvedValue({ isCoach: false, athleteId: 'athlete-1', studentId: 'student-1' }) };
+    planAccess = { resolveBySessionId: jest.fn().mockResolvedValue({ isCoach: false, athleteId: 'athlete-1', studentId: 'student-1' }) };
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
@@ -51,19 +51,19 @@ describe('WorkoutSessionsService.checkout', () => {
 
   const dto = { sessionId: 'session-1', startedAt: '2026-08-28T10:00:00.000Z', finishedAt: '2026-08-28T10:45:00.000Z' };
 
-  it('confere o acesso ao plano da sessão (individual ou compartilhado) antes de gravar', async () => {
+  it('confere o acesso pela sessão (plano, assinatura e semana da amostra do Free) antes de gravar', async () => {
     await service.checkout(athleteUser, dto);
-    expect(planAccess.resolveByPlanId).toHaveBeenCalledWith('plan-1', athleteUser);
+    expect(planAccess.resolveBySessionId).toHaveBeenCalledWith('session-1', athleteUser);
   });
 
   it('propaga ForbiddenException sem gravar nada', async () => {
-    planAccess.resolveByPlanId.mockRejectedValue(new ForbiddenException());
+    planAccess.resolveBySessionId.mockRejectedValue(new ForbiddenException());
     await expect(service.checkout(athleteUser, dto)).rejects.toThrow(ForbiddenException);
     expect(prisma.workoutSession.create).not.toHaveBeenCalled();
   });
 
   it('nega o coach: só o aluno finaliza o treino', async () => {
-    planAccess.resolveByPlanId.mockResolvedValue({ isCoach: true, athleteId: 'athlete-1', studentId: 'student-1' });
+    planAccess.resolveBySessionId.mockResolvedValue({ isCoach: true, athleteId: 'athlete-1', studentId: 'student-1' });
     await expect(service.checkout({ id: 'coach-1', role: 'coach' }, dto)).rejects.toThrow(ForbiddenException);
     expect(prisma.workoutSession.create).not.toHaveBeenCalled();
   });
@@ -170,7 +170,7 @@ describe('WorkoutSessionsService.listMine', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
-        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveBySessionId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: { findOne: jest.fn() } },
       ],
@@ -225,7 +225,7 @@ describe('WorkoutSessionsService.studentSummary', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
-        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveBySessionId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: studentsService },
       ],
@@ -334,7 +334,7 @@ describe('WorkoutSessionsService.sessionDetail', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
-        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveBySessionId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: studentsService },
       ],
@@ -415,7 +415,7 @@ describe('WorkoutSessionsService.coachAvgDuration', () => {
     const module = await Test.createTestingModule({
       providers: [
         WorkoutSessionsService,
-        { provide: PlanAccessService, useValue: { resolveByPlanId: jest.fn() } },
+        { provide: PlanAccessService, useValue: { resolveBySessionId: jest.fn() } },
         { provide: PrismaService, useValue: prisma },
         { provide: StudentsService, useValue: { findOne: jest.fn() } },
       ],

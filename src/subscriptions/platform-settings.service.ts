@@ -1,7 +1,7 @@
 import { ConflictException, Injectable } from '@nestjs/common';
-import { SubscriptionStatus } from '@prisma/client';
+import { PaymentStatus, SubscriptionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { GRANTING_STATUSES } from './subscription-access.service';
+import { GRANTING_STATUSES, PAST_DUE_GRACE_DAYS } from './subscription-access.service';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 
 export type PlatformSettingsView = {
@@ -15,7 +15,8 @@ export type PlatformSettingsView = {
 export class PlatformSettingsService {
   constructor(private prisma: PrismaService) {}
 
-  async get(): Promise<PlatformSettingsView> {
+  async get(now = new Date()): Promise<PlatformSettingsView> {
+    const fimDaTolerancia = new Date(now.getTime() - PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000);
     const [settings, totalStudents, studentsWithoutAccess] = await Promise.all([
       this.prisma.platformSettings.findUnique({ where: { id: 'singleton' } }),
       this.prisma.student.count({ where: ACTIVE_STUDENT }),
@@ -24,9 +25,20 @@ export class PlatformSettingsService {
           ...ACTIVE_STUDENT,
           OR: [
             { subscription: null },
-            { subscription: { status: { notIn: GRANTING_STATUSES as SubscriptionStatus[] } } },
-            // Mesma regra do SubscriptionAccessService: teste vencido não dá acesso.
-            { subscription: { status: SubscriptionStatus.TRIALING, trialEndsAt: { lte: new Date() } } },
+            // Mesma regra de `accessState` (subscription-access.service.ts):
+            { subscription: { status: { notIn: [...GRANTING_STATUSES, SubscriptionStatus.PAST_DUE] as SubscriptionStatus[] } } },
+            // teste vencido não dá acesso;
+            { subscription: { status: SubscriptionStatus.TRIALING, trialEndsAt: { lte: now } } },
+            // inadimplente sem fatura vencida no Asaas (posto à mão) ou com a mais antiga fora da tolerância;
+            { subscription: { status: SubscriptionStatus.PAST_DUE, gatewayPayments: { none: { status: PaymentStatus.overdue } } } },
+            {
+              subscription: {
+                status: SubscriptionStatus.PAST_DUE,
+                gatewayPayments: { some: { status: PaymentStatus.overdue, dueDate: { lte: fimDaTolerancia } } },
+              },
+            },
+            // cobrança contestada no cartão.
+            { subscription: { gatewayPayments: { some: { status: PaymentStatus.chargeback } } } },
           ],
         },
       }),

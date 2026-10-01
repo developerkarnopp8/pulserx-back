@@ -16,7 +16,23 @@ export type PlanAccess = {
   /** userId cujo progresso (logs/skips) vale para esta visão; null = coach dono de um plano SHARED (sem progresso próprio). */
   athleteId: string | null;
   isCoach: boolean;
+  /** Aluno no Free (amostra): última semana que ele pode ver/usar. null = todas (inclusive para o coach). */
+  maxWeek: number | null;
 };
+
+const SEMANA_BLOQUEADA = 'Assine um plano para ver as próximas semanas.';
+
+/**
+ * Semanas além da amostra do Free voltam sem conteúdo, marcadas `locked` (a tela mostra "Assine para ver"). O corte é aqui na
+ * API — a tela só exibe. Sem limite, devolve as semanas como estão.
+ */
+export function lockWeeksAfter<W extends { weekNumber: number; days: unknown[] }>(
+  weeks: W[],
+  maxWeek: number | null,
+): (W & { locked?: true })[] {
+  if (maxWeek == null) return weeks;
+  return weeks.map(w => (w.weekNumber > maxWeek ? { ...w, days: [], locked: true as const } : w));
+}
 
 /**
  * Fonte única de "quem pode ver/usar este plano". Substitui as checagens que assumiam
@@ -60,6 +76,7 @@ export class PlanAccessService {
         isCoach: true,
         studentId: plan.student?.id ?? null,
         athleteId: plan.student?.userId ?? null,
+        maxWeek: null,
       };
     }
 
@@ -68,7 +85,8 @@ export class PlanAccessService {
     if (plan.scope === PlanScope.INDIVIDUAL) {
       if (!plan.student || plan.student.userId !== user.id) throw denied();
       await this.subscriptionAccess.assertCanAccessCategory(plan.student.id, plan.category);
-      return { ...base, isCoach: false, studentId: plan.student.id, athleteId: user.id };
+      const maxWeek = await this.subscriptionAccess.weekLimit(plan.student.id);
+      return { ...base, isCoach: false, studentId: plan.student.id, athleteId: user.id, maxWeek };
     }
 
     // SHARED: pertence ao coach; o aluno entra pelo vínculo com o coach + assinatura.
@@ -79,24 +97,32 @@ export class PlanAccessService {
     });
     if (!student) throw denied();
     await this.subscriptionAccess.assertCanAccessCategory(student.id, plan.category);
-    return { ...base, isCoach: false, studentId: student.id, athleteId: user.id };
+    const maxWeek = await this.subscriptionAccess.weekLimit(student.id);
+    return { ...base, isCoach: false, studentId: student.id, athleteId: user.id, maxWeek };
+  }
+
+  /** Conteúdo de uma semana além da amostra do Free: 403 (vale para sessão, exercício, finalizar e pular treino). */
+  private assertWeekAllowed(access: PlanAccess, weekNumber: number): PlanAccess {
+    if (access.maxWeek != null && weekNumber > access.maxWeek) throw new ForbiddenException(SEMANA_BLOQUEADA);
+    return access;
   }
 
   async resolveBySessionId(sessionId: string, user: AuthUser): Promise<PlanAccess> {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
-      select: { day: { select: { week: { select: { planId: true } } } } },
+      select: { day: { select: { week: { select: { planId: true, weekNumber: true } } } } },
     });
     if (!session) throw new NotFoundException('Sessão não encontrada');
-    return this.resolveByPlanId(session.day.week.planId, user);
+    return this.assertWeekAllowed(await this.resolveByPlanId(session.day.week.planId, user), session.day.week.weekNumber);
   }
 
   async resolveByExerciseId(exerciseId: string, user: AuthUser): Promise<PlanAccess> {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      select: { session: { select: { day: { select: { week: { select: { planId: true } } } } } } },
+      select: { session: { select: { day: { select: { week: { select: { planId: true, weekNumber: true } } } } } } },
     });
     if (!exercise) throw new NotFoundException('Exercício não encontrado');
-    return this.resolveByPlanId(exercise.session.day.week.planId, user);
+    const { week } = exercise.session.day;
+    return this.assertWeekAllowed(await this.resolveByPlanId(week.planId, user), week.weekNumber);
   }
 }

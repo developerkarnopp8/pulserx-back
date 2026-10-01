@@ -32,7 +32,8 @@ export class WorkoutSessionsService {
     });
     if (!session) throw new BadRequestException('Sessão não encontrada');
 
-    const access = await this.planAccess.resolveByPlanId(session.day.week.planId, user); // ownership/assinatura: 403
+    // ownership/assinatura/semana da amostra do Free: 403
+    const access = await this.planAccess.resolveBySessionId(dto.sessionId, user);
     if (access.isCoach) throw new ForbiddenException('Somente o aluno finaliza o treino.');
 
     const logs = await this.prisma.workoutLog.findMany({

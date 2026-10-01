@@ -21,18 +21,29 @@ describe('PlatformSettingsService.get', () => {
     });
   });
 
-  it('conta como "sem acesso" quem não tem assinatura, não está ACTIVE/TRIALING ou está com o teste vencido', async () => {
+  it('conta como "sem acesso" pela mesma regra do app: sem assinatura, cancelada, teste vencido, inadimplente fora da tolerância, contestada', async () => {
     const { service, prisma } = build({ settings: { enforceSubscriptionAccess: true } });
-    await service.get();
+    const agora = new Date('2026-10-10T12:00:00Z');
+    await service.get(agora);
     // Aluno desvinculado não conta (nem no total, nem nos sem acesso).
     expect(prisma.student.count).toHaveBeenCalledWith({ where: { unlinkedAt: null } });
     const where = prisma.student.count.mock.calls.find(c => c[0].where.OR)![0].where;
     expect(where.unlinkedAt).toBeNull();
     expect(where.OR).toEqual([
       { subscription: null },
-      { subscription: { status: { notIn: ['ACTIVE', 'TRIALING'] } } },
-      { subscription: { status: 'TRIALING', trialEndsAt: { lte: expect.any(Date) } } },
+      { subscription: { status: { notIn: ['ACTIVE', 'TRIALING', 'PAST_DUE'] } } },
+      { subscription: { status: 'TRIALING', trialEndsAt: { lte: agora } } },
+      { subscription: { status: 'PAST_DUE', gatewayPayments: { none: { status: 'overdue' } } } },
+      { subscription: { status: 'PAST_DUE', gatewayPayments: { some: { status: 'overdue', dueDate: { lte: new Date('2026-10-05T12:00:00Z') } } } } },
+      { subscription: { gatewayPayments: { some: { status: 'chargeback' } } } },
     ]);
+  });
+
+  it('sem informar "agora": usa a data atual', async () => {
+    const { service, prisma } = build();
+    await service.get();
+    const where = prisma.student.count.mock.calls.find(c => c[0].where.OR)![0].where;
+    expect(Math.abs(where.OR[2].subscription.trialEndsAt.lte.getTime() - Date.now())).toBeLessThan(5000);
   });
 });
 

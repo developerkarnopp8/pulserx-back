@@ -28,9 +28,10 @@ export const DEFAULT_PLAN_TEMPLATES: DefaultPlanTemplate[] = [
   { name: 'LPO', description: 'Somente LPO.', priceCents: 0, categories: [TrainingCategory.LPO], isFree: false, active: false },
   {
     name: 'Free',
-    description: 'Acesso limitado, para conhecer a plataforma.',
+    description: 'Amostra do Core, para conhecer a plataforma.',
     priceCents: 0,
-    categories: [],
+    // Decisão do dono (2026-10-01): o Free mostra o Core (plano compartilhado do coach) como amostra.
+    categories: [TrainingCategory.CORE],
     isFree: true,
     active: true,
     // Sugestão inicial — o coach/admin decidem o que o Free libera.

@@ -1,13 +1,71 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { SubscriptionStatus, TrainingCategory } from '@prisma/client';
+import { PaymentStatus, Prisma, SubscriptionStatus, TrainingCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Status que dão acesso ao conteúdo. PAST_DUE e CANCELED NUNCA dão acesso — decisão do dono
- * (2026-09-27): sem carência de inadimplência nem "acesso até o fim do período pago" por
- * enquanto (revisitar quando existir cobrança recorrente real, com `renewsAt` confiável — R4).
+ * Status que dão acesso ao conteúdo sem condição. PAST_DUE dá acesso só durante a tolerância (abaixo) e CANCELED nunca.
  */
 export const GRANTING_STATUSES: SubscriptionStatus[] = [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING];
+
+/** Decisão do dono (2026-10-01): inadimplente continua vendo os treinos até 5 dias depois do vencimento da fatura mais antiga em aberto. */
+export const PAST_DUE_GRACE_DAYS = 5;
+const DIA_MS = 24 * 60 * 60 * 1000;
+/** Decisão do dono (2026-10-01): o Free é uma amostra — vê só a 1ª semana dos planos das categorias que ele libera. */
+export const FREE_SAMPLE_WEEKS = 1;
+
+/** O que a regra precisa da assinatura: status, fim do teste, categorias do plano e as cobranças vencidas/contestadas. */
+export const ACCESS_INCLUDE = Prisma.validator<Prisma.SubscriptionInclude>()({
+  plan: { select: { categories: true, isFree: true } },
+  gatewayPayments: {
+    where: { status: { in: [PaymentStatus.overdue, PaymentStatus.chargeback] } },
+    select: { status: true, dueDate: true },
+  },
+});
+
+export interface AccessSubscription {
+  status: SubscriptionStatus;
+  trialEndsAt: Date | null;
+  plan: { categories: TrainingCategory[]; isFree?: boolean };
+  gatewayPayments?: { status: PaymentStatus; dueDate: Date }[];
+}
+
+export interface AccessState {
+  categories: TrainingCategory[];
+  /** Inadimplente ainda dentro da tolerância: até quando continua vendo os treinos. */
+  graceUntil: Date | null;
+  /** Há cobrança contestada no cartão: sem acesso até a contestação ser resolvida (decisão do dono, 2026-10-01). */
+  chargeback: boolean;
+  /** Plano Free (amostra): até qual semana dos planos liberados o aluno vê. null = sem limite. */
+  sampleWeeks: number | null;
+}
+
+/** Regra única de acesso pela assinatura (fonte de verdade para o app e para a contagem do admin). */
+export function accessState(sub: AccessSubscription | null, now: Date): AccessState {
+  const nada: AccessState = { categories: [], graceUntil: null, chargeback: false, sampleWeeks: null };
+  const libera = (graceUntil: Date | null = null): AccessState => ({
+    categories: sub!.plan.categories,
+    graceUntil,
+    chargeback: false,
+    sampleWeeks: sub!.plan.isFree ? FREE_SAMPLE_WEEKS : null,
+  });
+  if (!sub) return nada;
+  const payments = sub.gatewayPayments ?? [];
+  if (payments.some(p => p.status === PaymentStatus.chargeback)) return { ...nada, chargeback: true };
+
+  if (sub.status === SubscriptionStatus.ACTIVE) return libera();
+  if (sub.status === SubscriptionStatus.TRIALING) {
+    const vencido = sub.trialEndsAt != null && sub.trialEndsAt.getTime() <= now.getTime();
+    return vencido ? nada : libera();
+  }
+  if (sub.status === SubscriptionStatus.PAST_DUE) {
+    const vencidas = payments.filter(p => p.status === PaymentStatus.overdue).map(p => p.dueDate.getTime());
+    // PAST_DUE posto à mão pelo coach (sem fatura vencida no Asaas): decisão dele, sem tolerância.
+    if (!vencidas.length) return nada;
+    const ate = new Date(Math.min(...vencidas) + PAST_DUE_GRACE_DAYS * DIA_MS);
+    return ate.getTime() > now.getTime() ? libera(ate) : nada;
+  }
+  return nada;
+}
 
 @Injectable()
 export class SubscriptionAccessService {
@@ -25,26 +83,19 @@ export class SubscriptionAccessService {
    * (active só controla se o plano aparece pra novas assinaturas).
    */
   async getAccessibleCategories(studentId: string, now: Date = new Date()): Promise<TrainingCategory[]> {
-    const subscription = await this.prisma.subscription.findUnique({
-      where: { studentId },
-      include: { plan: { select: { categories: true } } },
-    });
-    return SubscriptionAccessService.grantedCategories(subscription, now);
+    return (await this.getAccessState(studentId, now)).categories;
   }
 
-  private static grantedCategories(
-    subscription: { status: SubscriptionStatus; trialEndsAt: Date | null; plan: { categories: TrainingCategory[] } } | null,
-    now: Date,
-  ): TrainingCategory[] {
-    if (!subscription || !GRANTING_STATUSES.includes(subscription.status)) return [];
+  /** Estado completo (categorias, tolerância, contestação) — a tela do aluno usa para avisar. */
+  async getAccessState(studentId: string, now: Date = new Date()): Promise<AccessState> {
+    const subscription = await this.prisma.subscription.findUnique({ where: { studentId }, include: ACCESS_INCLUDE });
+    return accessState(subscription, now);
+  }
 
-    const trialExpired =
-      subscription.status === SubscriptionStatus.TRIALING &&
-      subscription.trialEndsAt != null &&
-      subscription.trialEndsAt.getTime() <= now.getTime();
-    if (trialExpired) return [];
-
-    return subscription.plan.categories;
+  /** Até qual semana o aluno vê os planos (Free = amostra). null = sem limite, inclusive com o bloqueio desligado. */
+  async weekLimit(studentId: string): Promise<number | null> {
+    if (!(await this.isEnforced())) return null;
+    return (await this.getAccessState(studentId)).sampleWeeks;
   }
 
   /** Dos alunos informados, os que enxergam a categoria — em 1–2 consultas, não uma por aluno. */
@@ -54,10 +105,10 @@ export class SubscriptionAccessService {
 
     const subscriptions = await this.prisma.subscription.findMany({
       where: { studentId: { in: studentIds } },
-      include: { plan: { select: { categories: true } } },
+      include: ACCESS_INCLUDE,
     });
     return subscriptions
-      .filter(s => SubscriptionAccessService.grantedCategories(s, now).includes(category))
+      .filter(s => accessState(s, now).categories.includes(category))
       .map(s => s.studentId);
   }
 
