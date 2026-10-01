@@ -512,6 +512,8 @@ model GatewayPayment {
   paidAt         DateTime?
   /// Link da fatura hospedada no Asaas (PIX/boleto/cartão) — pro aluno pagar.
   invoiceUrl     String?
+  /// Última recusa do cartão no débito automático (captura recusada ou reprovada na análise de risco). Volta a null quando é paga.
+  cardRefusedAt  DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
