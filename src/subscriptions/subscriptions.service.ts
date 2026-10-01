@@ -440,6 +440,7 @@ export class SubscriptionsService {
         dueDate: true,
         paidAt: true,
         invoiceUrl: true,
+        cardRefusedAt: true,
         createdAt: true,
         subscription: {
           select: {
@@ -498,6 +499,7 @@ export class SubscriptionsService {
         amount: true,
         dueDate: true,
         paidAt: true,
+        cardRefusedAt: true,
         invoiceUrl: true,
         createdAt: true,
       },
