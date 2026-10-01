@@ -9,6 +9,7 @@ function build(over: { existingPayment?: any; localSubscription?: any } = {}) {
     },
     subscription: {
       findFirst: jest.fn().mockResolvedValue('localSubscription' in over ? over.localSubscription : { id: 'sub1' }),
+      findUnique: jest.fn().mockResolvedValue({ student: { userId: 'aluno-1' } }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     webhookLog: {
@@ -21,7 +22,8 @@ function build(over: { existingPayment?: any; localSubscription?: any } = {}) {
       invoiceUrl: 'https://asaas.com/i/pay_1', subscription: 'sub_asaas_1',
     }),
   };
-  return { service: new WebhooksService(prisma as any, asaas as any), prisma, asaas };
+  const notifications = { create: jest.fn().mockResolvedValue({ id: 'n1' }) };
+  return { service: new WebhooksService(prisma as any, asaas as any, notifications as any), prisma, asaas, notifications };
 }
 
 describe('WebhooksService.assertValidToken', () => {
@@ -167,6 +169,81 @@ describe('WebhooksService.processPaymentEvent', () => {
     expect(update.status).toBe(local);
     expect(update).not.toHaveProperty('paidAt');
     expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  describe('cartão do débito automático recusado', () => {
+    const pendente = { id: 'pay_1', status: 'PENDING', value: 149, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1', subscription: 'sub_asaas_1' };
+
+    it.each(['PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'PAYMENT_REPROVED_BY_RISK_ANALYSIS'])(
+      '%s: marca a recusa e avisa o aluno (uma vez), sem mexer no status nem na assinatura',
+      async evento => {
+        const { service, prisma, asaas, notifications } = build({ existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: null } });
+        asaas.getPayment.mockResolvedValue(pendente);
+
+        await service.processPaymentEvent(evento, 'pay_1');
+
+        const { update, create } = prisma.gatewayPayment.upsert.mock.calls[0][0];
+        expect(update.status).toBe('pending');
+        expect(update.cardRefusedAt).toBeInstanceOf(Date);
+        expect(create.cardRefusedAt).toBeInstanceOf(Date);
+        expect(prisma.subscription.findUnique).toHaveBeenCalledWith({
+          where: { id: 'sub1' }, select: { student: { select: { userId: true } } },
+        });
+        expect(notifications.create).toHaveBeenCalledWith(
+          'aluno-1', 'card_refused', 'Não conseguimos cobrar no seu cartão',
+          'A mensalidade continua em aberto. Pague pela fatura (PIX, boleto ou outro cartão) para não perder o acesso.',
+          '/athlete/subscription',
+        );
+        expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('2ª e 3ª tentativa recusadas no mesmo dia: atualiza a data, mas não manda outro aviso', async () => {
+      const { service, prisma, asaas, notifications } = build({
+        existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: new Date('2026-10-01T06:00:00Z') },
+      });
+      asaas.getPayment.mockResolvedValue(pendente);
+      await service.processPaymentEvent('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'pay_1');
+      expect(prisma.gatewayPayment.upsert.mock.calls[0][0].update.cardRefusedAt).toBeInstanceOf(Date);
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('evento de recusa, mas a cobrança já consta paga no Asaas: não avisa nem marca recusa (limpa)', async () => {
+      const { service, prisma, notifications } = build({ existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: null } });
+      await service.processPaymentEvent('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'pay_1');
+      expect(prisma.gatewayPayment.upsert.mock.calls[0][0].update.cardRefusedAt).toBeNull();
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('depois paga (outro cartão, PIX...): o aviso de recusa some', async () => {
+      const { service, prisma } = build({ existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: new Date() } });
+      await service.processPaymentEvent('PAYMENT_CONFIRMED', 'pay_1');
+      expect(prisma.gatewayPayment.upsert.mock.calls[0][0].update.cardRefusedAt).toBeNull();
+    });
+
+    it('outro evento qualquer (ex.: vencida): não mexe na marca de recusa; cobrança nova nasce sem recusa', async () => {
+      const { service, prisma, asaas } = build({ existingPayment: null, localSubscription: { id: 'sub9' } });
+      asaas.getPayment.mockResolvedValue({ ...pendente, status: 'OVERDUE' });
+      await service.processPaymentEvent('PAYMENT_OVERDUE', 'pay_1');
+      const { update, create } = prisma.gatewayPayment.upsert.mock.calls[0][0];
+      expect(update).not.toHaveProperty('cardRefusedAt');
+      expect(create.cardRefusedAt).toBeNull();
+    });
+
+    it('assinatura sumiu ou o aviso falhou: o pagamento continua sendo processado', async () => {
+      const semSub = build({ existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: null } });
+      semSub.asaas.getPayment.mockResolvedValue(pendente);
+      semSub.prisma.subscription.findUnique.mockResolvedValue(null);
+      await semSub.service.processPaymentEvent('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'pay_1');
+      expect(semSub.notifications.create).not.toHaveBeenCalled();
+      expect(semSub.prisma.webhookLog.create).toHaveBeenCalled();
+
+      const falha = build({ existingPayment: { subscriptionId: 'sub1', paidAt: null, cardRefusedAt: null } });
+      falha.asaas.getPayment.mockResolvedValue(pendente);
+      falha.notifications.create.mockRejectedValue(new Error('fora'));
+      await expect(falha.service.processPaymentEvent('PAYMENT_CREDIT_CARD_CAPTURE_REFUSED', 'pay_1')).resolves.toBeUndefined();
+      expect(falha.prisma.webhookLog.create).toHaveBeenCalled();
+    });
   });
 
   it('sempre grava o WebhookLog, sem nunca guardar o corpo cru do evento', async () => {

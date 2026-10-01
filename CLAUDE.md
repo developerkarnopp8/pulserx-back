@@ -190,6 +190,12 @@
 > Asaas precisa ter os eventos de estorno/chargeback marcados no painel. Validação: 949 testes 100%, mutação 5/5, ao vivo 6/6 (estorno real no
 > sandbox → webhook local → refunded, data preservada, fora dos totais).
 
+> **Cartão recusado (2026-10-01, branch `feat-cartao-recusado`):** `GatewayPayment.cardRefusedAt` (migration `20260930224316_cartao_recusado`).
+> O Asaas não muda o status da cobrança quando o cartão é recusado, então o sinal é o NOME do evento (`PAYMENT_CREDIT_CARD_CAPTURE_REFUSED`,
+> `PAYMENT_REPROVED_BY_RISK_ANALYSIS`) de um webhook já autenticado pelo token, e só quando o status reconsultado não é pago — liga só um aviso
+> (não mexe em valor nem acesso). Pago = limpa. O aluno recebe UMA notificação in-app por cobrança (`card_refused`), mesmo com as 3 tentativas
+> do Asaas no dia. `cardRefusedAt` vai nas listas de cobranças do aluno e do coach. Validação: 956 testes 100%, mutação 5/5, ao vivo 7/7
+> (sandbox + webhook local), security-analyst sem achados.
 > **Regras de acesso pela assinatura (decisões do dono, 2026-10-01, branch `feat-regras-acesso-free-carencia`):** fonte única
 > `accessState` (`subscriptions/subscription-access.service.ts`), usada pelo app e espelhada na contagem do admin (`platform-settings`):
 > (1) **Free = amostra do Core, só a 1ª semana** (`FREE_SAMPLE_WEEKS`; o Free padrão nasce com CORE e a migration de dados
