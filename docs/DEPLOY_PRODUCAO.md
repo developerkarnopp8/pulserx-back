@@ -3,6 +3,8 @@
 > Só com a autorização do dono ("Podemos subir"). Produção ainda roda com os nomes antigos: pasta `/opt/aevonfit/backend`,
 > containers `aevonfit-api` / `aevonfit-db`, banco `aevonfit` (a migração de nomes da VPS é uma etapa própria, não misturar).
 > O backend chega na VPS por **rsync** (a pasta não tem `.git`).
+> **Hoje (decisão do dono, 2026-09-30) este servidor (`aevonfit.aevon.online`) é o AMBIENTE DE TESTE** — com Asaas real. O domínio
+> definitivo `pulserx.com.br` só entra numa migração própria, quando tudo estiver ok.
 
 ## Como o banco muda (desde 2026-09-30)
 
@@ -33,7 +35,7 @@ usa `${VAR:?}` e para antes de trocar o container se faltar alguma):
 | `ASAAS_WEBHOOK_TOKEN` | um segredo longo gerado por você, o MESMO cadastrado no webhook do painel do Asaas |
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | conta Cloudinary do PulseRx (fotos da landing) |
 | `APP_URL` | fica no próprio `docker-compose.prod.yml` (não é segredo): endereço dos links de senha/confirmação enviados por e-mail |
-| `RESEND_API_KEY`, `EMAIL_FROM` | conta Resend do PulseRx (e-mails; sem domínio verificado só entrega para o dono da conta) |
+| `RESEND_API_KEY`, `EMAIL_FROM` | conta Resend do PulseRx. Domínio `pulserx.com.br` verificado (2026-09-30); `EMAIL_FROM` entre aspas simples por causa dos `<>` e espaços: `EMAIL_FROM='PulseRx <nao-responda@pulserx.com.br>'` |
 
 Conferir sem mostrar valores: `grep -oE '^[A-Z_]+=' /opt/aevonfit/backend/.env`. Qualquer valor com `$` vai entre aspas simples.
 
@@ -49,10 +51,14 @@ Conferir sem mostrar valores: `grep -oE '^[A-Z_]+=' /opt/aevonfit/backend/.env`.
 3. **Código** (na máquina local, de um checkout LIMPO do `main` — nunca da pasta de trabalho):
    ```bash
    git fetch origin && git worktree add ../pulserx-back-deploy origin/main && cd ../pulserx-back-deploy
-   RSYNC='rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .env --exclude ".env.*" --exclude "*.env.production"'
-   eval $RSYNC -n -i ./ root@77.37.43.188:/opt/aevonfit/backend/   # ler as linhas *deleting antes
-   eval $RSYNC ./ root@77.37.43.188:/opt/aevonfit/backend/
+   # 3a. ENSAIO — rodar sozinho e LER as linhas "*deleting" antes de seguir (nenhuma deve ser .env, backup ou uploads)
+   rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .env --exclude ".env.*" --exclude "*.env.production" \
+     -e "ssh -i ~/.ssh/deploy_key" -n -i ./ root@77.37.43.188:/opt/aevonfit/backend/ | grep deleting
+   # 3b. Só depois de ler o ensaio: o mesmo comando sem -n -i
    ```
+   > **Armadilha (2026-09-30):** os `--exclude` vão **entre aspas, escritos direto no comando** — nunca guardados numa variável sem aspas.
+   > Numa variável, o shell troca `.env.*` pelo arquivo que existir na pasta local (`.env.example`) e o rsync deixa de proteger o resto:
+   > assim foi apagado o `.env.bak-20260930` da VPS (restaurado do backup do código). E o ensaio vai num comando separado, lido antes.
 4. **Imagem nova** (na VPS): `cd /opt/aevonfit/backend && docker compose -f docker-compose.prod.yml config -q && docker compose -f docker-compose.prod.yml build api` (o `config -q` falha na hora se faltar chave)
 5. **Migrations ANTES de trocar o container** (regra de ouro 8 — o container antigo segue atendendo; as migrations são aditivas):
    ```bash
@@ -60,9 +66,21 @@ Conferir sem mostrar valores: `grep -oE '^[A-Z_]+=' /opt/aevonfit/backend/.env`.
    docker compose -f docker-compose.prod.yml run --rm api npx prisma migrate deploy
    docker compose -f docker-compose.prod.yml run --rm api npx prisma migrate status   # "Database schema is up to date!"
    ```
-6. **Troca:** `docker compose -f docker-compose.prod.yml up -d api` e conferir os logs (`docker logs --tail 50 aevonfit-api`).
+6. **Troca:** `docker compose -f docker-compose.prod.yml up -d --no-deps api` e conferir os logs (`docker logs --tail 50 aevonfit-api`).
+   O `--no-deps` evita recriar o `aevonfit-db` junto (sem ele, em 2026-09-30 o banco reiniciou por alguns segundos; os dados ficam no volume,
+   mas conexões caem).
 7. **Smoke:** a API responde (Swagger `/api/docs`), login de coach e de aluno, uma tela de cada.
-8. **Frontend** depois da API (mesmo cuidado com o rsync, pasta `/opt/aevonfit/frontend`).
+8. **Frontend** depois da API, logo em seguida (o front antigo com a API nova pode quebrar telas que mudaram de contrato). Mesmo cuidado com o
+   rsync (pasta `/opt/aevonfit/frontend`, com `--exclude .angular`), depois `docker compose -f docker-compose.prod.yml build && ... up -d`.
+9. **Backup antes de cada deploy** (além do banco): `tar czf /root/backups/aevonfit_codigo_pre_deploy_$TS.tgz --exclude=node_modules
+   --exclude=dist --exclude=.env .` nas duas pastas e `docker tag backend-api:latest backend-api:rollback-$TS` (idem `frontend-frontend`) —
+   foi desse tar que o arquivo apagado por engano voltou.
+
+## Nginx do host
+
+- `/etc/nginx/sites-enabled/aevonfit.conf`, `location /api/` com **`client_max_body_size 21m`** (foto de até 5 MB, PDF de até 20 MB). Em
+  2026-09-30 foi posto 12m primeiro e o PDF grande falhava — o limite do nginx tem de ser maior que o maior upload aceito pela API.
+- Depois de mexer: `nginx -t && systemctl reload nginx`.
 
 ## Rollback
 
