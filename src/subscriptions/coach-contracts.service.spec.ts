@@ -1,5 +1,8 @@
 import { CoachContractsService } from './coach-contracts.service';
 
+/** Wallet ID no formato do Asaas (UUID). */
+const W = 'c0c1688f-636b-42c0-b6ee-7339182276b7';
+
 function build(over: { user?: any; contract?: any } = {}) {
   const prisma = {
     user: { findUnique: jest.fn().mockResolvedValue('user' in over ? over.user : { role: 'coach' }) },
@@ -46,23 +49,28 @@ describe('CoachContractsService', () => {
 
   describe('getWallet', () => {
     it('sem contrato cadastrado: walletId null', async () => {
-      await expect(build().service.getWallet('coach-1')).resolves.toEqual({ walletId: null });
+      await expect(build().service.getWallet('coach-1')).resolves.toEqual({ walletId: null, valid: false });
     });
 
     it('com contrato: devolve o walletId salvo', async () => {
-      const { service } = build({ contract: { gatewayAccountRef: 'wallet-1' } });
-      await expect(service.getWallet('coach-1')).resolves.toEqual({ walletId: 'wallet-1' });
+      const { service } = build({ contract: { gatewayAccountRef: W } });
+      await expect(service.getWallet('coach-1')).resolves.toEqual({ walletId: W, valid: true });
+    });
+
+    it('carteira salva antes da validação, fora do formato: devolve com valid false (a tela avisa)', async () => {
+      const { service } = build({ contract: { gatewayAccountRef: '00000000-0000-0000-0000-000000000000' } });
+      await expect(service.getWallet('coach-1')).resolves.toEqual({ walletId: '00000000-0000-0000-0000-000000000000', valid: false });
     });
   });
 
   describe('setWallet', () => {
     it('cadastra o walletId (upsert) com gateway ASAAS, sem tocar no platformFeePercent', async () => {
       const { service, prisma } = build();
-      await expect(service.setWallet('coach-1', 'wallet-1')).resolves.toEqual({ walletId: 'wallet-1' });
+      await expect(service.setWallet('coach-1', W)).resolves.toEqual({ walletId: W, valid: true });
       expect(prisma.coachContract.upsert).toHaveBeenCalledWith({
         where: { coachId: 'coach-1' },
-        create: { coachId: 'coach-1', gatewayAccountRef: 'wallet-1', gateway: 'ASAAS' },
-        update: { gatewayAccountRef: 'wallet-1', gateway: 'ASAAS' },
+        create: { coachId: 'coach-1', gatewayAccountRef: W, gateway: 'ASAAS' },
+        update: { gatewayAccountRef: W, gateway: 'ASAAS' },
       });
     });
   });
@@ -73,8 +81,13 @@ describe('CoachContractsService', () => {
     });
 
     it('com contrato: devolve walletId e a % como número', async () => {
-      const { service } = build({ contract: { gatewayAccountRef: 'wallet-1', platformFeePercent: '20.00' } });
-      await expect(service.getContractForCharge('coach-1')).resolves.toEqual({ walletId: 'wallet-1', platformFeePercent: 20 });
+      const { service } = build({ contract: { gatewayAccountRef: W, platformFeePercent: '20.00' } });
+      await expect(service.getContractForCharge('coach-1')).resolves.toEqual({ walletId: W, platformFeePercent: 20 });
+    });
+
+    it('carteira fora do formato conta como sem carteira (o checkout avisa o aluno em vez de o Asaas recusar)', async () => {
+      const { service } = build({ contract: { gatewayAccountRef: '00000000-0000-0000-0000-000000000000', platformFeePercent: '20.00' } });
+      await expect(service.getContractForCharge('coach-1')).resolves.toEqual({ walletId: null, platformFeePercent: 20 });
     });
   });
 });
