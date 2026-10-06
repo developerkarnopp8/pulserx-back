@@ -130,7 +130,7 @@ describe('AdminService', () => {
       prisma.user.findMany.mockResolvedValue([
         { id: 'coach-1', name: 'Luan', email: 'luan@x.com', aiImportEnabled: true, createdAt: new Date(), lastLoginAt: login },
       ]);
-      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '10.00', gatewayAccountRef: 'wallet-1' });
+      prisma.coachContract.findUnique.mockResolvedValue({ platformFeePercent: '10.00', gatewayAccountRef: 'c0c1688f-636b-42c0-b6ee-7339182276b7' });
       prisma.student.count.mockResolvedValue(5);
       prisma.subscription.findMany.mockResolvedValue([
         { status: 'ACTIVE', plan: { priceCents: 14900 } },

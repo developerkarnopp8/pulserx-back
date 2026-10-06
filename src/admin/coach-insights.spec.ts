@@ -22,7 +22,7 @@ describe('summarizeSubscriptions', () => {
 
 describe('coachAlerts', () => {
   it('tudo configurado: sem alerta', () => {
-    expect(coachAlerts({ platformFeePercent: 10, walletId: 'w1', pagePublished: true })).toEqual([]);
+    expect(coachAlerts({ platformFeePercent: 10, walletId: 'c0c1688f-636b-42c0-b6ee-7339182276b7', pagePublished: true })).toEqual([]);
   });
 
   it('0% de contrato, sem carteira e página despublicada: os três alertas, nessa ordem', () => {
@@ -33,5 +33,8 @@ describe('coachAlerts', () => {
 
   it('carteira vazia conta como sem carteira', () => {
     expect(coachAlerts({ platformFeePercent: 5, walletId: '', pagePublished: true })).toEqual(['NO_WALLET']);
+    // Carteira salva fora do formato (ex.: o código de teste só com zeros): alerta próprio, não "sem carteira".
+    expect(coachAlerts({ platformFeePercent: 5, walletId: '00000000-0000-0000-0000-000000000000', pagePublished: true })).toEqual(['INVALID_WALLET']);
+    expect(coachAlerts({ platformFeePercent: 5, walletId: 'minha-carteira', pagePublished: true })).toEqual(['INVALID_WALLET']);
   });
 });

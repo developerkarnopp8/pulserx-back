@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
-  AssignSubscriptionDto, CreateSubscriptionPlanDto, MAX_PLAN_PRICE_CENTS,
+  AssignSubscriptionDto, CreateSubscriptionPlanDto, MAX_PLAN_PRICE_CENTS, SetCoachWalletDto,
   UpdateCoachContractDto, UpdatePlatformSettingsDto, UpdateSubscriptionPlanDto,
 } from './subscription.dto';
 
@@ -88,5 +88,23 @@ describe('UpdatePlatformSettingsDto', () => {
     expect(await props(UpdatePlatformSettingsDto, {})).toEqual(['enforceSubscriptionAccess']);
     expect(await props(UpdatePlatformSettingsDto, { enforceSubscriptionAccess: 'true' })).toEqual(['enforceSubscriptionAccess']);
     expect(await props(UpdatePlatformSettingsDto, { enforceSubscriptionAccess: true, id: 'x' })).toEqual(['id']);
+  });
+});
+
+describe('SetCoachWalletDto', () => {
+  it('aceita Wallet ID no formato do Asaas; espaços nas pontas e maiúsculas são ajustados', async () => {
+    expect(await check(SetCoachWalletDto, { walletId: 'c0c1688f-636b-42c0-b6ee-7339182276b7' })).toHaveLength(0);
+    const dto = plainToInstance(SetCoachWalletDto, { walletId: '  C0C1688F-636B-42C0-B6EE-7339182276B7 ' });
+    expect(await validate(dto)).toHaveLength(0);
+    expect(dto.walletId).toBe('c0c1688f-636b-42c0-b6ee-7339182276b7');
+  });
+
+  it('recusa o que não é Wallet ID (inclusive o código de teste só com zeros) com mensagem em português', async () => {
+    for (const walletId of ['minha-carteira', 'c0c1688f636b42c0b6ee7339182276b7', '00000000-0000-0000-0000-000000000000', 123, '']) {
+      const errors = await check(SetCoachWalletDto, { walletId });
+      expect(errors.map(e => e.property)).toEqual(['walletId']);
+    }
+    const [err] = await check(SetCoachWalletDto, { walletId: 'minha-carteira' });
+    expect(Object.values(err.constraints ?? {}).join(' ')).toContain('Wallet ID inválido');
   });
 });
