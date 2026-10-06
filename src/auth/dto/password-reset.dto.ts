@@ -34,3 +34,18 @@ export class VerifyEmailDto {
   @MaxLength(100)
   password!: string;
 }
+
+/** Quem está logado troca a própria senha: confirma a atual (prova de posse) e escolhe a nova (mesma regra do link). */
+export class ChangePasswordDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(1, { message: 'Digite sua senha atual.' })
+  @MaxLength(128)
+  currentPassword!: string;
+
+  @ApiProperty({ minLength: 8 })
+  @IsString()
+  @MinLength(8, { message: 'A senha nova precisa ter pelo menos 8 caracteres.' })
+  @MaxLength(100)
+  newPassword!: string;
+}

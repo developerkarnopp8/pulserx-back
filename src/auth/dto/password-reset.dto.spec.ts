@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { ForgotPasswordDto, ResetPasswordDto, VerifyEmailDto } from './password-reset.dto';
+import { ChangePasswordDto, ForgotPasswordDto, ResetPasswordDto, VerifyEmailDto } from './password-reset.dto';
 
 const erros = async (cls: any, body: object) => (await validate(plainToInstance(cls, body))).length;
 
@@ -29,5 +29,16 @@ describe('DTOs de senha por e-mail', () => {
     expect(await erros(VerifyEmailDto, { token: 't'.repeat(43), password: 'curta' })).toBe(1);
     expect(await erros(VerifyEmailDto, { token: 't'.repeat(43), password: 'x'.repeat(101) })).toBe(1);
     expect(await erros(VerifyEmailDto, {})).toBe(2);
+  });
+});
+
+describe('ChangePasswordDto', () => {
+  it('exige a senha atual e a nova com pelo menos 8 caracteres (mesma regra do link)', async () => {
+    expect(await erros(ChangePasswordDto, { currentPassword: 'x', newPassword: '12345678' })).toBe(0);
+    expect(await erros(ChangePasswordDto, { currentPassword: '', newPassword: '12345678' })).toBe(1);
+    expect(await erros(ChangePasswordDto, { currentPassword: 'x', newPassword: '1234567' })).toBe(1);
+    expect(await erros(ChangePasswordDto, { currentPassword: 'x', newPassword: 'x'.repeat(101) })).toBe(1);
+    expect(await erros(ChangePasswordDto, { currentPassword: 'x'.repeat(129), newPassword: '12345678' })).toBe(1);
+    expect(await erros(ChangePasswordDto, {})).toBe(2);
   });
 });
