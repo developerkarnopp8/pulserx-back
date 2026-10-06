@@ -3,7 +3,7 @@ import { AuthTokenPurpose } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { appUrl } from '../common/app-url';
 import { EmailService } from '../common/email.service';
-import { escapeHtml } from '../common/escape-html';
+import { renderEmail } from '../common/email-layout';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { hashEmailToken, issueEmailToken, VERIFY_EMAIL_TTL_MS } from './email-tokens';
@@ -37,13 +37,15 @@ export class EmailVerificationService {
     // Token (e o plano escolhido) no fragmento (#): não vai para log de servidor nem no cabeçalho Referer.
     const extra = continuar ? `&c=${encodeURIComponent(continuar.slug)}&plano=${encodeURIComponent(continuar.planId)}` : '';
     const link = `${appUrl()}/confirmar-email#token=${token}${extra}`;
-    await this.email.send(
-      user.email,
-      'Confirme seu e-mail e crie sua senha — PulseRx',
-      `<p>Olá, ${escapeHtml(user.name)}.</p><p>Falta só confirmar o seu e-mail e criar a sua senha para entrar no PulseRx.</p>` +
-        `<p><a href="${link}">Confirmar e criar minha senha</a></p>` +
-        '<p>O link vale 48 horas e só pode ser usado uma vez. Se você não se inscreveu, ignore este e-mail.</p>',
-    );
+    const { html, text } = renderEmail({
+      preheader: 'Falta só confirmar o seu e-mail e criar a sua senha.',
+      title: 'Confirme seu e-mail',
+      greetingName: user.name,
+      paragraphs: ['Falta só confirmar o seu e-mail e criar a sua senha para entrar no PulseRx.'],
+      cta: { label: 'Confirmar e criar minha senha', url: link },
+      note: 'O link vale 48 horas e só pode ser usado uma vez. Se você não se inscreveu, ignore este e-mail.',
+    });
+    await this.email.send(user.email, 'Confirme seu e-mail e crie sua senha — PulseRx', html, text);
     if (process.env.NODE_ENV !== 'production') this.logger.log(`[dev] link de confirmação de ${user.email}: ${link}`);
   }
 

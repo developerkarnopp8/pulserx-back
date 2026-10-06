@@ -4,7 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from '../common/cloudinary.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../common/email.service';
-import { escapeHtml } from '../common/escape-html';
+import { renderEmail } from '../common/email-layout';
+import { appUrl } from '../common/app-url';
 import { UpdateCoachProfileDto, CreateLeadDto, UpsertTestimonialDto, UpsertFaqItemDto, PageCopyDto } from './dto/coach-profile.dto';
 
 const PUBLIC_PLAN_SELECT = {
@@ -229,16 +230,20 @@ export class CoachProfileService {
       '/coach/landing-page',
     );
 
-    const safeName = escapeHtml(dto.name);
-    const safeEmail = escapeHtml(dto.email);
-    const safePhone = dto.phone ? escapeHtml(dto.phone) : undefined;
-    const safeMessage = dto.message ? escapeHtml(dto.message) : undefined;
-    await this.email.send(
-      profile.coach.email,
-      `Novo contato de ${safeName} — PulseRx`,
-      `<p><strong>${safeName}</strong> (${safeEmail}${safePhone ? `, ${safePhone}` : ''}) entrou em contato pela sua página pública.</p>` +
-      (safeMessage ? `<p>Mensagem: ${safeMessage}</p>` : ''),
-    );
+    const { html, text } = renderEmail({
+      preheader: `${dto.name} mandou uma mensagem pela sua página.`,
+      title: 'Novo contato pela sua página',
+      paragraphs: ['Alguém entrou em contato pela sua página pública no PulseRx. Responda direto por e-mail ou telefone.'],
+      details: [
+        { label: 'Nome', value: dto.name },
+        { label: 'E-mail', value: dto.email },
+        ...(dto.phone ? [{ label: 'Telefone', value: dto.phone }] : []),
+        ...(dto.message ? [{ label: 'Mensagem', value: dto.message }] : []),
+      ],
+      cta: { label: 'Ver no painel', url: `${appUrl()}/coach/landing-page` },
+    });
+    // Assunto é texto puro (não HTML): só tira quebras de linha que alguém tenha colado no nome.
+    await this.email.send(profile.coach.email, `Novo contato de ${dto.name.replace(/[\r\n]+/g, ' ')} — PulseRx`, html, text);
 
     return lead;
   }

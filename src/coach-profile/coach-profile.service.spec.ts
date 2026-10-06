@@ -369,9 +369,11 @@ describe('CoachProfileService.createLead', () => {
     );
     expect(email.send).toHaveBeenCalledWith(
       'luan@aevonfit.com',
-      expect.stringContaining('Ana'),
-      expect.stringContaining('Ana'),
+      'Novo contato de Ana — PulseRx',
+      expect.stringContaining('Quero treinar'),
+      expect.stringContaining('Telefone: 11999999999'),
     );
+    expect(email.send.mock.calls[0][2]).toContain('/coach/landing-page');
     expect(result.id).toBe('lead1');
   });
 
@@ -401,6 +403,16 @@ describe('CoachProfileService.createLead', () => {
       data: { coachId: 'coach-1', name: 'Ana', email: 'ana@x.com', phone: undefined, message: undefined },
     });
     const html = email.send.mock.calls[0][2];
-    expect(html).not.toContain('Mensagem:');
+    expect(html).not.toContain('Mensagem');
+    expect(email.send.mock.calls[0][3]).not.toContain('Mensagem');
+    expect(email.send.mock.calls[0][3]).not.toContain('Telefone');
+  });
+
+  it('assunto é texto puro: quebra de linha colada no nome vira espaço', async () => {
+    const { service, prisma, email } = build();
+    prisma.coachProfile.findUnique.mockResolvedValue(publishedProfile);
+    prisma.lead.create.mockResolvedValue({ id: 'lead1' });
+    await service.createLead('luan', { name: 'Ana\r\nBcc: x@evil.com', email: 'ana@x.com' });
+    expect(email.send.mock.calls[0][1]).toBe('Novo contato de Ana Bcc: x@evil.com — PulseRx');
   });
 });

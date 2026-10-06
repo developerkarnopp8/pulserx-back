@@ -3,7 +3,7 @@ import { AuthTokenPurpose } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { appUrl } from '../common/app-url';
 import { EmailService } from '../common/email.service';
-import { escapeHtml } from '../common/escape-html';
+import { renderEmail } from '../common/email-layout';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashEmailToken, issueEmailToken, RESET_PASSWORD_TTL_MS, SET_PASSWORD_TTL_MS } from './email-tokens';
@@ -105,13 +105,15 @@ export class PasswordResetService {
       coach: 'Seu treinador pediu uma nova senha para a sua conta no PulseRx.',
       admin: 'A equipe do PulseRx enviou um link para você criar uma nova senha.',
     }[quemPediu];
-    await this.email.send(
-      user.email,
-      'Crie uma nova senha — PulseRx',
-      `<p>Olá, ${escapeHtml(user.name)}.</p><p>${motivo}</p>` +
-        `<p><a href="${link}">Criar nova senha</a></p>` +
-        '<p>O link vale 1 hora e só pode ser usado uma vez. Se você não pediu, ignore este e-mail — sua senha continua a mesma.</p>',
-    );
+    const { html, text } = renderEmail({
+      preheader: 'Use o link para criar uma nova senha.',
+      title: 'Crie uma nova senha',
+      greetingName: user.name,
+      paragraphs: [motivo],
+      cta: { label: 'Criar nova senha', url: link },
+      note: 'O link vale 1 hora e só pode ser usado uma vez. Se você não pediu, ignore este e-mail — sua senha continua a mesma.',
+    });
+    await this.email.send(user.email, 'Crie uma nova senha — PulseRx', html, text);
     this.devLog(`link de nova senha de ${user.email}: ${link}`);
   }
 
@@ -124,15 +126,17 @@ export class PasswordResetService {
     const link = `${appUrl()}/redefinir-senha#token=${token}`;
     const quem =
       criadoPor.tipo === 'coach'
-        ? `Seu treinador ${escapeHtml(criadoPor.nome)} criou a sua conta no PulseRx.`
+        ? `Seu treinador ${criadoPor.nome} criou a sua conta no PulseRx.`
         : 'A equipe do PulseRx criou a sua conta de treinador.';
-    await this.email.send(
-      user.email,
-      'Crie sua senha — PulseRx',
-      `<p>Olá, ${escapeHtml(user.name)}.</p><p>${quem}</p>` +
-        `<p><a href="${link}">Criar minha senha</a></p>` +
-        '<p>O link vale 7 dias e só pode ser usado uma vez. Se venceu, use "Esqueci minha senha" na tela de entrada.</p>',
-    );
+    const { html, text } = renderEmail({
+      preheader: 'Sua conta no PulseRx está pronta — falta só criar a senha.',
+      title: 'Bem-vindo ao PulseRx',
+      greetingName: user.name,
+      paragraphs: [quem, 'Para entrar, crie a sua senha pelo botão abaixo.'],
+      cta: { label: 'Criar minha senha', url: link },
+      note: 'O link vale 7 dias e só pode ser usado uma vez. Se venceu, use "Esqueci minha senha" na tela de entrada.',
+    });
+    await this.email.send(user.email, 'Crie sua senha — PulseRx', html, text);
     this.devLog(`link de criar senha de ${user.email}: ${link}`);
   }
 

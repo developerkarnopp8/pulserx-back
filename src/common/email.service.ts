@@ -25,9 +25,9 @@ export class EmailService {
   }
 
   /** Envia e-mail; nunca lança — falha de e-mail não pode derrubar o fluxo que a disparou (ex.: um lead). */
-  async send(to: string, subject: string, html: string): Promise<void> {
+  async send(to: string, subject: string, html: string, text?: string): Promise<void> {
     try {
-      const { error } = await this.client.emails.send({ from: this.from, to, subject, html });
+      const { error } = await this.client.emails.send({ from: this.from, to, subject, html, ...(text ? { text } : {}) });
       if (error) {
         this.logger.error(`Falha ao enviar e-mail pra ${to}`, JSON.stringify(error));
       }
