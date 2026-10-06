@@ -26,6 +26,8 @@ describe('Controllers da R3 — guards e papéis', () => {
     expect(rolesOf(SubscriptionsController, 'cancelMine')).toEqual(['athlete']);
     expect(rolesOf(SubscriptionsController, 'checkout')).toEqual(['athlete']);
     expect(rolesOf(SubscriptionsController, 'listMyPayments')).toEqual(['athlete']);
+    expect(rolesOf(SubscriptionsController, 'getMyPaymentStatus')).toEqual(['athlete']);
+    expect(rolesOf(SubscriptionsController, 'getMyPix')).toEqual(['athlete']);
     expect(rolesOf(SubscriptionsController, 'getWallet')).toEqual(['coach']);
     expect(rolesOf(SubscriptionsController, 'setWallet')).toEqual(['coach']);
     expect(rolesOf(SubscriptionsController, 'listGatewayPayments')).toEqual(['coach']);
@@ -50,7 +52,7 @@ describe('SubscriptionsController — delegação', () => {
     const service = {
       getMine: jest.fn(), getForStudent: jest.fn(), assign: jest.fn(), remove: jest.fn(),
       cancelMine: jest.fn(), checkout: jest.fn(), listGatewayPayments: jest.fn(), getFinancialSummary: jest.fn(), getMonthlyBreakdown: jest.fn(),
-      listMyPayments: jest.fn(),
+      listMyPayments: jest.fn(), getMyPaymentStatus: jest.fn(), getMyPix: jest.fn(),
     };
     const coachContracts = { getWallet: jest.fn(), setWallet: jest.fn() };
     const controller = new SubscriptionsController(service as unknown as SubscriptionsService, coachContracts as unknown as CoachContractsService);
@@ -107,6 +109,19 @@ describe('SubscriptionsController — delegação', () => {
     const req = { user: { id: 'athlete-1', role: 'athlete' } };
     controller.listMyPayments(req);
     expect(service.listMyPayments).toHaveBeenCalledWith(req.user);
+  });
+
+  it.each(['getMyPaymentStatus', 'getMyPix'] as const)('%s usa req.user (atleta), nunca id vindo da requisição', method => {
+    const { controller, service } = build();
+    const req = { user: { id: 'athlete-1', role: 'athlete' } };
+    controller[method](req);
+    expect(service[method]).toHaveBeenCalledWith(req.user);
+  });
+
+  it('acompanhar o pagamento tem limite próprio (folga para consultar a cada 5 s em duas abas); o PIX, limite apertado', () => {
+    const limitOf = (m: string) => Reflect.getMetadata('THROTTLER:LIMITdefault', SubscriptionsController.prototype[m as keyof SubscriptionsController]);
+    expect(limitOf('getMyPaymentStatus')).toBe(40);
+    expect(limitOf('getMyPix')).toBe(10);
   });
 
   it('cancelMine usa req.user (atleta)', () => {
