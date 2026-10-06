@@ -1,4 +1,5 @@
 import { SubscriptionStatus } from '@prisma/client';
+import { isValidWalletId } from '../common/wallet-id';
 
 export interface SubscriptionRow {
   status: SubscriptionStatus;
@@ -37,7 +38,7 @@ export function summarizeSubscriptions(subscriptions: SubscriptionRow[], activeS
 }
 
 /** O que o admin precisa resolver antes de o coach cobrar direito. */
-export type CoachAlert = 'NO_CONTRACT' | 'NO_WALLET' | 'PAGE_UNPUBLISHED';
+export type CoachAlert = 'NO_CONTRACT' | 'NO_WALLET' | 'INVALID_WALLET' | 'PAGE_UNPUBLISHED';
 
 export function coachAlerts(input: {
   platformFeePercent: number;
@@ -49,6 +50,8 @@ export function coachAlerts(input: {
   if (input.platformFeePercent <= 0) alerts.push('NO_CONTRACT');
   // Sem carteira no Asaas: o aluno não consegue assinar plano pago.
   if (!input.walletId) alerts.push('NO_WALLET');
+  // Carteira salva fora do formato de um Wallet ID do Asaas: o checkout trata como sem carteira.
+  else if (!isValidWalletId(input.walletId)) alerts.push('INVALID_WALLET');
   // Sem página publicada: ninguém consegue se inscrever pela landing.
   if (!input.pagePublished) alerts.push('PAGE_UNPUBLISHED');
   return alerts;

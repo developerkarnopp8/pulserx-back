@@ -32,6 +32,25 @@ export class SubscriptionsController {
     return this.service.listMyPayments(req.user);
   }
 
+  // Rota consultada em intervalos pela tela do PIX enquanto espera a confirmação (1 a cada 5 s = 12/min). Limite próprio
+  // com folga para duas abas abertas; só lê o banco, nunca chama o Asaas.
+  @Roles('athlete')
+  @Throttle({ default: { limit: 40, ttl: 60_000 } })
+  @Get('subscriptions/me/payment-status')
+  @ApiOperation({ summary: 'Situação da própria assinatura (plano, coach, cobrança em aberto) — só banco, para acompanhar o pagamento' })
+  getMyPaymentStatus(@Request() req: any) {
+    return this.service.getMyPaymentStatus(req.user);
+  }
+
+  // Pede o QR ao Asaas (com memória de 5 min por cobrança): limite apertado, como o checkout.
+  @Roles('athlete')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get('subscriptions/me/pix')
+  @ApiOperation({ summary: 'PIX (QR e copia e cola) da cobrança em aberto do próprio aluno' })
+  getMyPix(@Request() req: any) {
+    return this.service.getMyPix(req.user);
+  }
+
   // Limite próprio, mais apertado que o geral da API (30/min): cada chamada aqui pode disparar
   // requisições reais pro gateway (Asaas) — cria cliente/assinatura de verdade e tem custo/cota.
   // Reduz também a janela de exploração de retries acidentais duplicando assinatura no gateway.

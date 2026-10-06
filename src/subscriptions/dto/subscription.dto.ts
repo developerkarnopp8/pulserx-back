@@ -1,7 +1,8 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { WALLET_ID_FORMAT_MESSAGE, WALLET_ID_PATTERN, normalizeWalletId } from '../../common/wallet-id';
 import {
   ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional,
-  IsString, Max, MaxLength, Min, MinLength, ValidateNested,
+  IsString, Matches, Max, MaxLength, Min, MinLength, NotEquals, ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SubscriptionStatus, TrainingCategory } from '@prisma/client';
@@ -121,7 +122,10 @@ export class CheckoutSubscriptionDto {
 }
 
 export class SetCoachWalletDto {
-  @ApiProperty({ description: 'walletId da conta Asaas do coach — onde ele recebe o split de cada cobrança' })
-  @IsString() @MinLength(10) @MaxLength(100)
+  @ApiProperty({ description: 'walletId da conta Asaas do coach — onde ele recebe o split de cada cobrança (UUID)' })
+  @Transform(({ value }) => normalizeWalletId(value))
+  @IsString()
+  @Matches(WALLET_ID_PATTERN, { message: WALLET_ID_FORMAT_MESSAGE })
+  @NotEquals('00000000-0000-0000-0000-000000000000', { message: WALLET_ID_FORMAT_MESSAGE })
   walletId: string;
 }
