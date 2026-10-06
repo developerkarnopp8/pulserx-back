@@ -205,6 +205,13 @@ export class CoachProfileService {
       completionRate: profile.completionRate,
       whatsappNumber: profile.whatsappNumber,
       videoUrl: profile.videoUrl,
+      // Garantia, suporte e textos da página: eram lidos do banco mas ficavam fora da resposta — a página pública
+      // mostrava sempre o padrão, mesmo com o coach tendo preenchido no editor.
+      guaranteeDays: profile.guaranteeDays,
+      guaranteeText: profile.guaranteeText,
+      supportEmail: profile.supportEmail,
+      supportHours: profile.supportHours,
+      pageCopy: profile.pageCopy,
       plans,
       testimonials: testimonials.map(t => ({ id: t.id, authorName: t.authorName, authorRole: t.authorRole, rating: t.rating, content: t.content })),
       faqItems: faqItems.map(f => ({ id: f.id, question: f.question, answer: f.answer })),
