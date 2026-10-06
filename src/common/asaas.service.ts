@@ -27,6 +27,13 @@ export interface SavedCard {
   last4: string;
 }
 
+/** QR Code PIX de uma cobrança: imagem PNG em base64, código copia e cola e validade ("AAAA-MM-DD HH:mm:ss", horário de Brasília). */
+export interface PixQrCode {
+  encodedImage: string;
+  payload: string;
+  expirationDate: string | null;
+}
+
 export interface AsaasPayment {
   id: string;
   status: string;
@@ -135,6 +142,20 @@ export class AsaasService {
     const last4 = sub.creditCard?.creditCardNumber?.slice(-4);
     if (sub.billingType !== 'CREDIT_CARD' || !last4 || !/^\d{4}$/.test(last4)) return null;
     return { brand: sub.creditCard?.creditCardBrand ?? 'Cartão', last4 };
+  }
+
+  /**
+   * QR Code PIX de uma cobrança (vale para a forma "a escolher"). Sem chave PIX na conta da plataforma, o Asaas gera um QR que
+   * vale só até 23h59 do mesmo dia — por isso a validade vem junto. Só a imagem (base64), o copia e cola e a validade saem daqui.
+   */
+  async getPixQrCode(asaasPaymentId: string): Promise<PixQrCode> {
+    const res = await this.request<{ encodedImage?: string; payload?: string; expirationDate?: string }>(
+      `/payments/${encodeURIComponent(asaasPaymentId)}/pixQrCode`,
+    );
+    if (!res.encodedImage || !res.payload) {
+      throw new ServiceUnavailableException('O PIX não está disponível para esta cobrança agora. Use a fatura para pagar.');
+    }
+    return { encodedImage: res.encodedImage, payload: res.payload, expirationDate: res.expirationDate ?? null };
   }
 
   /** Reconsulta um pagamento específico — nunca confiar no corpo do webhook sem isso. */
