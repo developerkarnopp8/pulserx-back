@@ -685,3 +685,18 @@ model AuthToken {
   @@index([userId, purpose])
   @@map("auth_tokens")
 }
+
+/// Registro de acessos do admin a dados de alunos (LGPD: prestação de contas). Só quem, o quê e quando — nunca o conteúdo
+/// visto. Sem chave estrangeira de propósito: o registro fica mesmo que o coach/admin deixe de existir.
+model AdminAccessLog {
+  id            String   @id @default(uuid())
+  adminId       String
+  /// Ex.: VIEW_COACH_STUDENTS (abriu a lista de alunos de um coach).
+  action        String
+  targetCoachId String?
+  createdAt     DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@map("admin_access_logs")
+}

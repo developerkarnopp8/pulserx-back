@@ -162,6 +162,38 @@ export class AdminService {
     return { ...coach, welcomeSent: true };
   }
 
+  /**
+   * Alunos ativos de um coach, só o mínimo para suporte e cobrança (decisão do dono, 2026-10-06 — opção B): nome, plano,
+   * situação da assinatura e desde quando é aluno. Nunca e-mail, CPF, saúde ou treino — a AEVON é controladora só dos dados
+   * de conta/assinatura/pagamento (Política, seção 1). Cada consulta fica registrada (quem, qual coach, quando).
+   */
+  async listCoachStudents(adminId: string, coachId: string) {
+    const coach = await this.prisma.user.findUnique({ where: { id: coachId }, select: { role: true, deletedAt: true } });
+    if (!coach || coach.role !== 'coach' || coach.deletedAt) throw new NotFoundException('Coach não encontrado');
+
+    const students = await this.prisma.student.findMany({
+      where: { coachId, ...ACTIVE_STUDENT, user: { deletedAt: null } },
+      select: {
+        createdAt: true,
+        user: { select: { name: true } },
+        subscription: { select: { status: true, plan: { select: { name: true } } } },
+      },
+      orderBy: { user: { name: 'asc' } },
+    });
+
+    // Registro de prestação de contas: falhar aqui nunca impede o admin de ver (mesma regra dos outros registros).
+    await this.prisma.adminAccessLog
+      .create({ data: { adminId, action: 'VIEW_COACH_STUDENTS', targetCoachId: coachId } })
+      .catch(err => this.logger.error(`Falha ao registrar acesso do admin ${adminId} aos alunos do coach ${coachId}`, err instanceof Error ? err.stack : String(err)));
+
+    return students.map(s => ({
+      name: s.user.name,
+      joinedAt: s.createdAt,
+      planName: s.subscription?.plan.name ?? null,
+      status: s.subscription?.status ?? null,
+    }));
+  }
+
   /** Admin manda ao coach o link de nova senha por e-mail (1 hora). A senha atual continua valendo até ele trocar. */
   async resetCoachPassword(id: string): Promise<{ sent: true }> {
     const user = await this.prisma.user.findUnique({

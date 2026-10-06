@@ -22,6 +22,7 @@ describe('AdminController — guards e roles', () => {
 function build() {
   const service = {
     listCoaches: jest.fn(), financialOverview: jest.fn().mockResolvedValue({ months: [] }), createCoach: jest.fn(), resetCoachPassword: jest.fn(), toggleCoachAi: jest.fn(),
+    listCoachStudents: jest.fn(),
   };
   const contracts = { get: jest.fn(), setFee: jest.fn() };
   const platformSettings = { get: jest.fn(), setEnforcement: jest.fn() };
@@ -47,6 +48,12 @@ describe('AdminController — delegação', () => {
     const dto = { name: 'Novo Coach', email: 'novo@aevonfit.com' };
     controller.createCoach(dto as never);
     expect(service.createCoach).toHaveBeenCalledWith(dto);
+  });
+
+  it('listCoachStudents repassa o admin do token (para o registro) e o coach da URL', () => {
+    const { controller, service } = build();
+    controller.listCoachStudents('coach-1', { user: { id: 'admin-1' } });
+    expect(service.listCoachStudents).toHaveBeenCalledWith('admin-1', 'coach-1');
   });
 
   it('resetPassword repassa o id', () => {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Put, Body, Param, Query, UseGuards, HttpCode, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Body, Param, Query, Request, UseGuards, HttpCode, ParseUUIDPipe } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -55,6 +55,12 @@ export class AdminController {
   @ApiOperation({ summary: 'Cria conta de coach nova, com senha forte gerada na hora' })
   createCoach(@Body() dto: CreateCoachDto) {
     return this.service.createCoach(dto);
+  }
+
+  @Get('coaches/:id/students')
+  @ApiOperation({ summary: 'Alunos ativos do coach — só nome, plano, situação da assinatura e data de entrada (cada consulta é registrada)' })
+  listCoachStudents(@Param('id', ParseUUIDPipe) id: string, @Request() req: { user: { id: string } }) {
+    return this.service.listCoachStudents(req.user.id, id);
   }
 
   @Post('coaches/:id/reset-password')
