@@ -3,8 +3,10 @@
 > Só com a autorização do dono ("Podemos subir"). Produção ainda roda com os nomes antigos: pasta `/opt/aevonfit/backend`,
 > containers `aevonfit-api` / `aevonfit-db`, banco `aevonfit` (a migração de nomes da VPS é uma etapa própria, não misturar).
 > O backend chega na VPS por **rsync** (a pasta não tem `.git`).
-> **Hoje (decisão do dono, 2026-09-30) este servidor (`aevonfit.aevon.online`) é o AMBIENTE DE TESTE** — com Asaas real. O domínio
-> definitivo `pulserx.com.br` só entra numa migração própria, quando tudo estiver ok.
+> **Domínio (2026-10-06): `pulserx.com.br`** — mesmo servidor, banco e Asaas real que antes atendiam `aevonfit.aevon.online`.
+> Vhost do host em `/etc/nginx/sites-available/pulserx.conf` (certificado Certbot para `pulserx.com.br` + `www`). O webhook do Asaas
+> aponta para `https://pulserx.com.br/api/webhooks/asaas`. O `aevonfit.aevon.online` redireciona para o domínio novo, com `/api/`
+> ainda atendido lá durante a transição. CORS/socket: `src/common/allowed-origins.ts`; links dos e-mails: `APP_URL` no compose.
 
 ## Como o banco muda (desde 2026-09-30)
 

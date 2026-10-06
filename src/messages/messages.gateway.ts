@@ -6,15 +6,12 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { ALLOWED_ORIGINS } from '../common/allowed-origins';
 import { JwtService } from '@nestjs/jwt';
 
 @WebSocketGateway({
   cors: {
-    origin: [
-      'http://localhost:4200',
-      'https://aevonfit.aevon.online',
-      'https://aevonfit.bfit.aevon.online',
-    ],
+    origin: ALLOWED_ORIGINS,
   },
   namespace: '/messages',
 })
