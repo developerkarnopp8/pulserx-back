@@ -28,7 +28,9 @@ describe('AdminService', () => {
       },
       student: {
         count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
       },
+      adminAccessLog: { create: jest.fn().mockResolvedValue({}) },
       gatewayPayment: {
         findMany: jest.fn().mockResolvedValue([]),
       },
@@ -311,5 +313,46 @@ describe('AdminService', () => {
 
     await expect(service.toggleCoachAi('athlete-1', true)).rejects.toThrow(NotFoundException);
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  describe('listCoachStudents — alunos do coach, só o mínimo, com registro', () => {
+    it('devolve só nome, plano, situação e data de entrada dos alunos ativos; registra a consulta', async () => {
+      prisma.user.findUnique.mockResolvedValue({ role: 'coach', deletedAt: null });
+      prisma.student.findMany.mockResolvedValue([
+        { createdAt: new Date('2026-09-01'), user: { name: 'Ana' }, subscription: { status: 'ACTIVE', plan: { name: 'Core' } } },
+        { createdAt: new Date('2026-09-10'), user: { name: 'Bia' }, subscription: null },
+      ]);
+
+      const result = await service.listCoachStudents('admin-1', 'coach-1');
+
+      expect(result).toEqual([
+        { name: 'Ana', joinedAt: new Date('2026-09-01'), planName: 'Core', status: 'ACTIVE' },
+        { name: 'Bia', joinedAt: new Date('2026-09-10'), planName: null, status: null },
+      ]);
+      const query = prisma.student.findMany.mock.calls[0][0];
+      expect(query.where).toEqual({ coachId: 'coach-1', unlinkedAt: null, user: { deletedAt: null } });
+      // Nada além do mínimo sai do banco: nem e-mail, nem CPF, nem id.
+      expect(JSON.stringify(query.select)).not.toMatch(/email|cpf|health|id"/i);
+      expect(prisma.adminAccessLog.create).toHaveBeenCalledWith({
+        data: { adminId: 'admin-1', action: 'VIEW_COACH_STUDENTS', targetCoachId: 'coach-1' },
+      });
+    });
+
+    it('id que não é de coach (aluno, admin, inexistente ou excluído): 404 e nada é registrado', async () => {
+      for (const user of [null, { role: 'athlete', deletedAt: null }, { role: 'coach', deletedAt: new Date() }]) {
+        prisma.user.findUnique.mockResolvedValue(user);
+        await expect(service.listCoachStudents('admin-1', 'x')).rejects.toBeInstanceOf(NotFoundException);
+      }
+      expect(prisma.student.findMany).not.toHaveBeenCalled();
+      expect(prisma.adminAccessLog.create).not.toHaveBeenCalled();
+    });
+
+    it('falha ao registrar não impede o admin de ver a lista', async () => {
+      prisma.user.findUnique.mockResolvedValue({ role: 'coach', deletedAt: null });
+      prisma.adminAccessLog.create.mockRejectedValue(new Error('banco ocupado'));
+      await expect(service.listCoachStudents('admin-1', 'coach-1')).resolves.toEqual([]);
+      prisma.adminAccessLog.create.mockRejectedValue('texto');
+      await expect(service.listCoachStudents('admin-1', 'coach-1')).resolves.toEqual([]);
+    });
   });
 });
