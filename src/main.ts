@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { ALLOWED_ORIGINS } from './common/allowed-origins';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -23,12 +24,7 @@ async function bootstrap() {
 
   // CORS
   app.enableCors({
-    origin: [
-      'http://localhost:4200',
-      'http://localhost:3000',
-      'https://aevonfit.aevon.online',
-      'https://aevonfit.bfit.aevon.online',
-    ],
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
