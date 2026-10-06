@@ -48,7 +48,9 @@ describe('EmailVerificationService.sendVerification', () => {
     expect(para).toBe('ana@example.com');
     expect(assunto).toBe('Confirme seu e-mail e crie sua senha — PulseRx');
     expect(html).toContain('Olá, Ana &lt;b&gt;.');
-    const m = /href="http:\/\/localhost:4200\/confirmar-email#token=([A-Za-z0-9_-]{43})&c=luan-teste&plano=plan-1"/.exec(html);
+    // No HTML o & do link vai como &amp; (o navegador lê de volta como &); na versão só texto, cru.
+    const m = /href="http:\/\/localhost:4200\/confirmar-email#token=([A-Za-z0-9_-]{43})&amp;c=luan-teste&amp;plano=plan-1"/.exec(html);
+    expect(email.send.mock.calls[0][3]).toContain(`#token=${m![1]}&c=luan-teste&plano=plan-1`);
     expect(m).not.toBeNull();
     expect(hashEmailToken(m![1])).toBe(data.tokenHash);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[dev\] link de confirmação de ana@example\.com: http/));
@@ -59,7 +61,7 @@ describe('EmailVerificationService.sendVerification', () => {
     await service.sendVerification(ana);
     expect(email.send.mock.calls[0][2]).toMatch(/confirmar-email#token=[A-Za-z0-9_-]{43}"/);
     await service.sendVerification(ana, { slug: 'a&b', planId: 'x"y' });
-    expect(email.send.mock.calls[1][2]).toContain('&c=a%26b&plano=x%22y"');
+    expect(email.send.mock.calls[1][2]).toContain('&amp;c=a%26b&amp;plano=x%22y"');
   });
 
   it('em produção não escreve o link no log', async () => {

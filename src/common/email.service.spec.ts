@@ -37,6 +37,12 @@ describe('EmailService', () => {
       });
     });
 
+    it('com a versão só texto: envia junto (ajuda a não cair no spam)', async () => {
+      sendMock.mockResolvedValue({ data: { id: 'x' }, error: null });
+      await new EmailService().send('a@x.com', 'Assunto', '<p>corpo</p>', 'corpo');
+      expect(sendMock).toHaveBeenLastCalledWith(expect.objectContaining({ html: '<p>corpo</p>', text: 'corpo' }));
+    });
+
     it('API retorna erro (ex.: domínio não verificado): loga mas não lança', async () => {
       sendMock.mockResolvedValue({ data: null, error: { message: 'domínio não verificado' } });
       const service = new EmailService();
