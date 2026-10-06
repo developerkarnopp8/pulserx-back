@@ -32,6 +32,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     gatewayPayment: {
       upsert: jest.fn().mockResolvedValue({ id: 'pay1' }),
       findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     coachContract: { findUnique: jest.fn().mockResolvedValue(null) },
     $executeRaw: jest.fn().mockResolvedValue(undefined),
@@ -54,6 +55,7 @@ function build(over: { student?: any; plan?: any; current?: any; myStudent?: any
     createSubscription: jest.fn().mockResolvedValue({ id: 'sub_asaas_1' }),
     cancelSubscription: jest.fn().mockResolvedValue(undefined),
     getSubscriptionCard: jest.fn().mockResolvedValue({ brand: 'MASTERCARD', last4: '8829' }),
+    getPixQrCode: jest.fn().mockResolvedValue({ encodedImage: 'iVBOR', payload: '000201pix', expirationDate: '2026-10-06 23:59:59' }),
     listPaymentsBySubscription: jest.fn().mockResolvedValue([
       { id: 'pay_1', value: 149, netValue: 147.01, dueDate: '2026-10-01', invoiceUrl: 'https://asaas.com/i/pay_1' },
     ]),
@@ -799,5 +801,119 @@ describe('SubscriptionsService.listMyPayments', () => {
     const call = prisma.gatewayPayment.findMany.mock.calls[0][0];
     expect(call.select).not.toHaveProperty('asaasPaymentId');
     expect(call.select).not.toHaveProperty('subscription');
+  });
+});
+
+describe('SubscriptionsService.getMyPaymentStatus', () => {
+  const athlete = { id: 'u1', role: 'athlete' };
+
+  it('só o banco: plano, coach, cobrança em aberto e último pagamento — nunca chama o Asaas', async () => {
+    const { service, prisma, asaas } = build({
+      myStudent: { id: 's1', coach: { name: 'Luan' } },
+      current: {
+        status: 'PAST_DUE',
+        plan: { name: 'Core', priceCents: 14900, isFree: false },
+        gatewayPayments: [
+          { status: 'pending', paidAt: null },
+          { status: 'paid', paidAt: new Date('2026-09-06T12:00:00Z') },
+        ],
+      },
+    });
+    await expect(service.getMyPaymentStatus(athlete)).resolves.toEqual({
+      coachName: 'Luan', status: 'PAST_DUE', plan: { name: 'Core', priceCents: 14900, isFree: false },
+      hasOpenPayment: true, lastPaidAt: new Date('2026-09-06T12:00:00Z'),
+    });
+    expect(prisma.student.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1', unlinkedAt: null } }));
+    expect(prisma.subscription.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { studentId: 's1' } }));
+    expect(asaas.getSubscriptionCard).not.toHaveBeenCalled();
+  });
+
+  it('pago (webhook confirmou): sem cobrança em aberto', async () => {
+    const { service } = build({
+      myStudent: { id: 's1', coach: { name: 'Luan' } },
+      current: { status: 'ACTIVE', plan: { name: 'Core', priceCents: 14900, isFree: false }, gatewayPayments: [{ status: 'paid', paidAt: new Date(1) }] },
+    });
+    await expect(service.getMyPaymentStatus(athlete)).resolves.toMatchObject({ status: 'ACTIVE', hasOpenPayment: false, lastPaidAt: new Date(1) });
+  });
+
+  it('sem assinatura: status e plano nulos', async () => {
+    const { service } = build({ myStudent: { id: 's1', coach: { name: 'Luan' } }, current: null });
+    await expect(service.getMyPaymentStatus(athlete)).resolves.toEqual({
+      coachName: 'Luan', status: null, plan: null, hasOpenPayment: false, lastPaidAt: null,
+    });
+  });
+
+  it('sem perfil de aluno (ou desvinculado): 404', async () => {
+    const { service } = build({ myStudent: null });
+    await expect(service.getMyPaymentStatus(athlete)).rejects.toThrow('Perfil de aluno não encontrado');
+  });
+});
+
+describe('SubscriptionsService.getMyPix', () => {
+  const athlete = { id: 'u1', role: 'athlete' };
+  const openPayment = {
+    asaasPaymentId: 'pay_asaas_7', amount: 149, dueDate: new Date('2026-10-06T00:00:00Z'), invoiceUrl: 'https://asaas.com/i/pay_7',
+    subscription: { plan: { name: 'Core' } },
+  };
+  function buildPix(payment: any = openPayment) {
+    const b = build({ myStudent: { id: 's1', coach: { name: 'Luan' } } });
+    b.prisma.gatewayPayment.findFirst.mockResolvedValue(payment);
+    return b;
+  }
+
+  it('cobrança em aberto mais antiga do PRÓPRIO aluno (assinatura não cancelada); devolve QR sem o id do Asaas', async () => {
+    const { service, prisma, asaas } = buildPix();
+    const r = await service.getMyPix(athlete);
+    expect(prisma.gatewayPayment.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { subscription: { studentId: 's1', status: { not: 'CANCELED' } }, status: { in: ['pending', 'overdue'] } },
+      orderBy: { dueDate: 'asc' },
+    }));
+    expect(asaas.getPixQrCode).toHaveBeenCalledWith('pay_asaas_7');
+    expect(r).toEqual({
+      amount: 149, dueDate: openPayment.dueDate, planName: 'Core', coachName: 'Luan',
+      qrCodeImage: 'iVBOR', pixCode: '000201pix', expiresAt: '2026-10-06 23:59:59', invoiceUrl: 'https://asaas.com/i/pay_7',
+    });
+    expect(JSON.stringify(r)).not.toContain('pay_asaas_7');
+  });
+
+  it('sem cobrança em aberto: 404 com mensagem em português, sem chamar o Asaas', async () => {
+    const { service, asaas } = buildPix(null);
+    await expect(service.getMyPix(athlete)).rejects.toThrow('Você não tem nenhuma cobrança em aberto.');
+    expect(asaas.getPixQrCode).not.toHaveBeenCalled();
+  });
+
+  it('sem perfil de aluno: 404', async () => {
+    const { service, prisma } = buildPix();
+    prisma.student.findFirst.mockResolvedValue(null);
+    await expect(service.getMyPix(athlete)).rejects.toThrow('Perfil de aluno não encontrado');
+  });
+
+  it('guarda o QR por 5 min por cobrança: reabrir não consulta o Asaas de novo; depois disso, consulta', async () => {
+    const agora = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const { service, asaas } = buildPix();
+    await service.getMyPix(athlete);
+    await service.getMyPix(athlete);
+    expect(asaas.getPixQrCode).toHaveBeenCalledTimes(1);
+    agora.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1);
+    await service.getMyPix(athlete);
+    expect(asaas.getPixQrCode).toHaveBeenCalledTimes(2);
+    agora.mockRestore();
+  });
+
+  it('falha no Asaas: propaga e não guarda (a próxima abertura tenta de novo)', async () => {
+    const { service, asaas } = buildPix();
+    asaas.getPixQrCode.mockRejectedValueOnce(new Error('fora do ar'));
+    await expect(service.getMyPix(athlete)).rejects.toThrow('fora do ar');
+    await service.getMyPix(athlete);
+    expect(asaas.getPixQrCode).toHaveBeenCalledTimes(2);
+  });
+
+  it('memória cheia: esvazia antes de guardar (nunca cresce sem limite)', async () => {
+    const { service, asaas } = buildPix();
+    const cache = (service as any).pixCache as Map<string, unknown>;
+    for (let i = 0; i < 1000; i++) cache.set(`x${i}`, { pix: {}, expira: Number.MAX_SAFE_INTEGER });
+    await service.getMyPix(athlete);
+    expect(cache.size).toBe(1);
+    expect(asaas.getPixQrCode).toHaveBeenCalledTimes(1);
   });
 });

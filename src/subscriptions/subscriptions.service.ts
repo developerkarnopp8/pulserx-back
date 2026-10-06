@@ -1,11 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { PaymentGateway, SubscriptionStatus } from '@prisma/client';
+import { PaymentGateway, PaymentStatus, SubscriptionStatus } from '@prisma/client';
 import { paymentBreakdown, sumBreakdowns } from './payment-breakdown';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionAccessService } from './subscription-access.service';
 import { CoachContractsService } from './coach-contracts.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { AsaasService, SavedCard } from '../common/asaas.service';
+import { AsaasService, PixQrCode, SavedCard } from '../common/asaas.service';
 import { ACTIVE_STUDENT } from '../common/student-scope';
 import { isValidCpf, onlyCpfDigits } from '../common/cpf';
 import { AssignSubscriptionDto, CheckoutSubscriptionDto } from './dto/subscription.dto';
@@ -15,6 +15,8 @@ type AuthUser = { id: string; role: string };
 /** Memória do cartão do débito automático (ver `cardOf`). */
 const CARD_CACHE_TTL_MS = 10 * 60 * 1000;
 const CARD_CACHE_MAX = 1000;
+/** Memória do QR do PIX (ver `pixOf`): curta, porque o QR sem chave PIX vence no fim do dia. */
+const PIX_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const SUBSCRIPTION_VIEW = {
   id: true,
@@ -34,6 +36,7 @@ const SUBSCRIPTION_VIEW = {
 @Injectable()
 export class SubscriptionsService {
   private readonly cardCache = new Map<string, { card: SavedCard | null; expira: number }>();
+  private readonly pixCache = new Map<string, { pix: PixQrCode; expira: number }>();
 
   constructor(
     private prisma: PrismaService,
@@ -497,6 +500,84 @@ export class SubscriptionsService {
    * Histórico real de cobranças (Asaas) do PRÓPRIO aluno logado — pra tela "Minha Assinatura".
    * Sempre resolve o studentId a partir do userId do token (nunca aceita um id vindo do body/URL).
    */
+  /**
+   * Situação da própria assinatura, só com dado do banco (nunca chama o Asaas): é o que a tela do PIX consulta a cada poucos
+   * segundos esperando o webhook confirmar o pagamento, e o que as telas de assinatura ativa e de boas-vindas mostram.
+   */
+  async getMyPaymentStatus(user: AuthUser) {
+    const student = await this.prisma.student.findFirst({
+      where: { userId: user.id, ...ACTIVE_STUDENT },
+      select: { id: true, coach: { select: { name: true } } },
+    });
+    if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { studentId: student.id },
+      select: {
+        status: true,
+        plan: { select: { name: true, priceCents: true, isFree: true } },
+        gatewayPayments: {
+          where: { status: { in: [PaymentStatus.pending, PaymentStatus.overdue, PaymentStatus.paid] } },
+          select: { status: true, paidAt: true },
+          orderBy: { dueDate: 'desc' },
+        },
+      },
+    });
+    const payments = subscription?.gatewayPayments ?? [];
+    return {
+      coachName: student.coach.name,
+      status: subscription?.status ?? null,
+      plan: subscription?.plan ?? null,
+      hasOpenPayment: payments.some(p => p.status !== PaymentStatus.paid),
+      lastPaidAt: payments.find(p => p.status === PaymentStatus.paid)?.paidAt ?? null,
+    };
+  }
+
+  /**
+   * PIX da cobrança em aberto mais antiga do próprio aluno (a que o mantém sem acesso), para pagar dentro do app. O QR é pedido
+   * ao Asaas e guardado alguns minutos por cobrança: reabrir a tela não vira nova consulta. O id da cobrança no Asaas não sai.
+   */
+  async getMyPix(user: AuthUser) {
+    const student = await this.prisma.student.findFirst({
+      where: { userId: user.id, ...ACTIVE_STUDENT },
+      select: { id: true, coach: { select: { name: true } } },
+    });
+    if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');
+    const payment = await this.prisma.gatewayPayment.findFirst({
+      where: {
+        subscription: { studentId: student.id, status: { not: SubscriptionStatus.CANCELED } },
+        status: { in: [PaymentStatus.pending, PaymentStatus.overdue] },
+      },
+      select: {
+        asaasPaymentId: true, amount: true, dueDate: true, invoiceUrl: true,
+        subscription: { select: { plan: { select: { name: true } } } },
+      },
+      orderBy: { dueDate: 'asc' },
+    });
+    if (!payment) throw new NotFoundException('Você não tem nenhuma cobrança em aberto.');
+    const pix = await this.pixOf(payment.asaasPaymentId);
+    return {
+      amount: payment.amount,
+      dueDate: payment.dueDate,
+      planName: payment.subscription.plan.name,
+      coachName: student.coach.name,
+      qrCodeImage: pix.encodedImage,
+      pixCode: pix.payload,
+      expiresAt: pix.expirationDate,
+      invoiceUrl: payment.invoiceUrl,
+    };
+  }
+
+  /** QR do PIX com memória curta por cobrança (cota da conta da plataforma no Asaas). Falha não é guardada. */
+  private async pixOf(asaasPaymentId: string): Promise<PixQrCode> {
+    const agora = Date.now();
+    const guardado = this.pixCache.get(asaasPaymentId);
+    if (guardado && guardado.expira > agora) return guardado.pix;
+    const pix = await this.asaas.getPixQrCode(asaasPaymentId);
+    if (this.pixCache.size >= CARD_CACHE_MAX) this.pixCache.clear();
+    this.pixCache.set(asaasPaymentId, { pix, expira: agora + PIX_CACHE_TTL_MS });
+    return pix;
+  }
+
   async listMyPayments(user: AuthUser) {
     const student = await this.prisma.student.findFirst({ where: { userId: user.id, ...ACTIVE_STUDENT }, select: { id: true } });
     if (!student) throw new NotFoundException('Perfil de aluno não encontrado para este usuário');

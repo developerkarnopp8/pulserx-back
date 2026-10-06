@@ -119,6 +119,36 @@ describe('AsaasService', () => {
     });
   });
 
+  describe('getPixQrCode', () => {
+    it('chama GET /payments/:id/pixQrCode e devolve só imagem, copia e cola e validade', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, {
+        encodedImage: 'iVBORw0KGgo=', payload: '00020126pix', expirationDate: '2026-10-06 23:59:59', description: 'Plano X', success: true,
+      }));
+      const service = new AsaasService();
+
+      const result = await service.getPixQrCode('pay_1');
+
+      expect(fetchMock).toHaveBeenCalledWith('https://api-sandbox.asaas.com/v3/payments/pay_1/pixQrCode', expect.any(Object));
+      expect(result).toEqual({ encodedImage: 'iVBORw0KGgo=', payload: '00020126pix', expirationDate: '2026-10-06 23:59:59' });
+    });
+
+    it('id com caractere especial vai codificado na URL', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { encodedImage: 'a', payload: 'b' }));
+      await new AsaasService().getPixQrCode('pay/../x');
+      expect(fetchMock).toHaveBeenCalledWith('https://api-sandbox.asaas.com/v3/payments/pay%2F..%2Fx/pixQrCode', expect.any(Object));
+    });
+
+    it('sem validade informada: devolve null', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { encodedImage: 'a', payload: 'b' }));
+      expect((await new AsaasService().getPixQrCode('pay_1')).expirationDate).toBeNull();
+    });
+
+    it('resposta sem QR (PIX indisponível): ServiceUnavailableException com orientação para a fatura', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { success: false }));
+      await expect(new AsaasService().getPixQrCode('pay_1')).rejects.toThrow(/Use a fatura/);
+    });
+  });
+
   describe('getPayment', () => {
     it('chama GET /payments/:id e devolve o pagamento', async () => {
       fetchMock.mockResolvedValue(jsonResponse(200, { id: 'pay_1', status: 'CONFIRMED', value: 149, dueDate: '2026-10-01', invoiceUrl: 'https://x' }));
