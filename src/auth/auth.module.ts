@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule, JwtSignOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { PasswordChangeController } from './password-change.controller';
+import { PasswordChangeService } from './password-change.service';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { LocalStrategy } from './strategies/local.strategy';
@@ -41,9 +43,9 @@ export function buildJwtModuleOptions(configService: ConfigService) {
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, PasswordResetController, EmailVerificationController],
+  controllers: [AuthController, PasswordResetController, EmailVerificationController, PasswordChangeController],
   providers: [
-    AuthService, LocalStrategy, JwtStrategy, PasswordResetService, EmailVerificationService, EmailService, UnverifiedCleanupService,
+    AuthService, LocalStrategy, JwtStrategy, PasswordResetService, PasswordChangeService, EmailVerificationService, EmailService, UnverifiedCleanupService,
   ],
   exports: [AuthService, PasswordResetService, EmailVerificationService],
 })
