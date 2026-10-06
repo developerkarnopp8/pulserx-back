@@ -302,6 +302,8 @@ describe('CoachProfileService.getPublicBySlug', () => {
       headline: 'H', subheadline: 'S', quote: 'Q', achievementBadge: 'Semifinals',
       yearsExperience: 12, athletesCount: 1400, npsScore: 92, completionRate: 88.4,
       whatsappNumber: '11999999999', videoUrl: 'https://youtu.be/abc', published: true,
+      guaranteeDays: 15, guaranteeText: 'Devolvo tudo', supportEmail: 'suporte@example.com', supportHours: 'Seg a sex',
+      pageCopy: { howItWorksTitle: 'Como funciona', plansTitle: 'Planos' },
       coach: { id: 'coach-1', name: 'Luan' },
     });
     prisma.subscriptionPlan.findMany.mockResolvedValue([
@@ -324,6 +326,9 @@ describe('CoachProfileService.getPublicBySlug', () => {
       headline: 'H', subheadline: 'S', quote: 'Q', achievementBadge: 'Semifinals',
       yearsExperience: 12, athletesCount: 1400, npsScore: 92, completionRate: 88.4,
       whatsappNumber: '11999999999', videoUrl: 'https://youtu.be/abc',
+      // Garantia, suporte e textos da página editados pelo coach chegam à página pública (antes ficavam de fora).
+      guaranteeDays: 15, guaranteeText: 'Devolvo tudo', supportEmail: 'suporte@example.com', supportHours: 'Seg a sex',
+      pageCopy: { howItWorksTitle: 'Como funciona', plansTitle: 'Planos' },
       plans: [{ id: 'plan1', name: 'Core', description: null, priceCents: 9900, categories: ['CORE'], isFree: false }],
       testimonials: [{ id: 't1', authorName: 'Ana', authorRole: 'Atleta', rating: 5, content: 'Ótimo!' }],
       faqItems: [{ id: 'f1', question: 'Serve pra iniciante?', answer: 'Sim.' }],
